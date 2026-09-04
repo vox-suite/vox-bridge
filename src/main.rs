@@ -34,7 +34,7 @@ async fn main() {
 }
 
 async fn index_handler() -> impl IntoResponse {
-    Html("<h1>Hello</h1>")
+    Html("<h1>I love Mayuri, she's my dream girl</h1>")
 }
 
 async fn ws_socket_upgrade(
