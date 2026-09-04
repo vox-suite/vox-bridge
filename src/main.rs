@@ -26,11 +26,9 @@ async fn main() {
         .route("/ws", get(ws_socket_upgrade))
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
-    println!("Server running on http://127.0.0.1:3000");
+    println!("Server running on http://0.0.0.0:3000");
 
     axum::serve(listener, app).await.unwrap();
 }
