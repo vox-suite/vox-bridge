@@ -33,5 +33,6 @@ jobs:
           ssh -i ~/.ssh/deploy "$USER@$HOST" \
             'mv /home/opc/oddessy/oddessy.new /home/opc/oddessy/oddessy && \
              chmod +x /home/opc/oddessy/oddessy && \
+             sudo chcon -t bin_t /home/opc/oddessy/oddessy && \
              sudo systemctl restart oddessy && \
-             sleep 2 && systemctl is-active oddessy'
+             sleep 3 && systemctl is-active oddessy'
