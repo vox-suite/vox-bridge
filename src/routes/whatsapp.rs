@@ -41,6 +41,7 @@ pub struct Value {
 pub struct Messages {
     #[serde(rename = "type")]
     kind: Option<String>,
+    from: Option<String>,
     text: Option<Text>,
 }
 
@@ -98,6 +99,8 @@ pub async fn wa_receive(headers: HeaderMap, body: String) -> impl IntoResponse {
                         if message.kind.as_deref() == Some("text") {
                             let Some(text) = message.text else { continue };
                             println!("{:?}", text.body);
+                            let Some(from) = message.from else { continue };
+                            let _ = send_message("Got it", from.as_str()).await;
                         }
                     }
                 }
@@ -106,4 +109,28 @@ pub async fn wa_receive(headers: HeaderMap, body: String) -> impl IntoResponse {
         }
         Err(_e) => StatusCode::OK,
     }
+}
+
+pub async fn send_message(msg: &str, receiver_number: &str) -> Result<(), reqwest::Error> {
+    let token = std::env::var("WHATSAPP_ACCESS_KEY").expect("WHATSAPP_ACCESS_KEY not set");
+    let phone_id = std::env::var("WHATSAPP_PHONE_ID").expect("WHATSAPP_PHONE_ID not set");
+    let url = format!("https://graph.facebook.com/v25.0/{phone_id}/messages");
+    let response = reqwest::Client::new()
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+        "messaging_product": "whatsapp",
+            "to": receiver_number,
+            "type": "text",
+            "text": {
+                "body": msg
+            }
+        }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        eprintln!("WA send message fail: {}", response.status());
+    }
+    Ok(())
 }
