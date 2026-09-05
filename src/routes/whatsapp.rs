@@ -1,5 +1,11 @@
-use axum::{extract::Query, http::StatusCode, response::IntoResponse};
+use axum::{
+    extract::Query,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
+use sha2::Sha256;
 
 #[derive(Deserialize)]
 pub struct VerifyParams {
@@ -55,7 +61,34 @@ pub async fn wa_verify(Query(p): Query<VerifyParams>) -> impl IntoResponse {
     }
 }
 
-pub async fn wa_receive(body: String) -> impl IntoResponse {
+fn valid_signature(headers: &HeaderMap, body: &str) -> bool {
+    let Ok(secret) = std::env::var("META_APP_SECRET") else {
+        return false;
+    };
+    let Some(header) = headers
+        .get("X-Hub-Signature-256")
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(hex_sig) = header.strip_prefix("sha256=") else {
+        return false;
+    };
+    let Ok(their_sig) = hex::decode(hex_sig) else {
+        return false;
+    };
+
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC takes a key of any length");
+    mac.update(body.as_bytes());
+    mac.verify_slice(&their_sig).is_ok()
+}
+
+pub async fn wa_receive(headers: HeaderMap, body: String) -> impl IntoResponse {
+    if !valid_signature(&headers, &body) {
+        eprintln!("wa: rejected unsigned/invalid request");
+        return StatusCode::FORBIDDEN;
+    }
     match serde_json::from_str::<WebhookPaylaod>(&body) {
         Ok(p) => {
             for entry in p.entry {
