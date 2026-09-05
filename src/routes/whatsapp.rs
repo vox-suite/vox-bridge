@@ -11,6 +11,38 @@ pub struct VerifyParams {
     token: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct WebhookPaylaod {
+    pub entry: Vec<Entry>,
+}
+
+#[derive(Deserialize)]
+pub struct Entry {
+    changes: Option<Vec<Changes>>,
+}
+
+#[derive(Deserialize)]
+pub struct Changes {
+    value: Option<Value>,
+}
+
+#[derive(Deserialize)]
+pub struct Value {
+    messages: Option<Vec<Messages>>,
+}
+
+#[derive(Deserialize)]
+pub struct Messages {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    text: Option<Text>,
+}
+
+#[derive(Deserialize)]
+pub struct Text {
+    body: Option<String>,
+}
+
 pub async fn wa_verify(Query(p): Query<VerifyParams>) -> impl IntoResponse {
     let verify_key = std::env::var("WA_VERIFY_KEY").expect("WA_VERIFY_KEY not set");
     if p.mode.as_deref() == Some("subscribe") && p.token.as_deref() == Some(verify_key.as_str()) {
@@ -20,5 +52,25 @@ pub async fn wa_verify(Query(p): Query<VerifyParams>) -> impl IntoResponse {
         )
     } else {
         (StatusCode::FORBIDDEN, String::new())
+    }
+}
+
+pub async fn wa_receive(body: String) -> impl IntoResponse {
+    match serde_json::from_str::<WebhookPaylaod>(&body) {
+        Ok(p) => {
+            for entry in p.entry {
+                for change in entry.changes.into_iter().flatten() {
+                    let Some(value) = change.value else { continue };
+                    for message in value.messages.into_iter().flatten() {
+                        if message.kind.as_deref() == Some("text") {
+                            let Some(text) = message.text else { continue };
+                            println!("{:?}", text.body);
+                        }
+                    }
+                }
+            }
+            StatusCode::OK
+        }
+        Err(_e) => StatusCode::OK,
     }
 }

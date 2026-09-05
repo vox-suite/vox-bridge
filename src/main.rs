@@ -27,7 +27,10 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(ws_socket_upgrade))
-        .route("/bridge/wa", get(routes::whatsapp::wa_verify))
+        .route(
+            "/bridge/wa",
+            get(routes::whatsapp::wa_verify).post(routes::whatsapp::wa_receive),
+        )
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
