@@ -8,6 +8,7 @@ use axum::{
     routing::get,
 };
 use futures_util::{SinkExt, StreamExt};
+mod routes;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -17,6 +18,8 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
+    dotenv::dotenv().ok();
+
     let (tx, _rx) = broadcast::channel(100);
 
     let app_state = Arc::new(AppState { tx });
@@ -24,6 +27,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(ws_socket_upgrade))
+        .route("/bridge/wa", get(routes::whatsapp::wa_verify))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -34,7 +38,7 @@ async fn main() {
 }
 
 async fn index_handler() -> impl IntoResponse {
-    Html("<h1>I love Mayuri, she's my dream girl</h1>")
+    Html("<h1>Hello</h1>")
 }
 
 async fn ws_socket_upgrade(
