@@ -29,10 +29,10 @@ jobs:
           echo "$KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
           # atomic swap: upload beside the running binary, then mv (survives ETXTBSY)
-          scp -i ~/.ssh/deploy target/release/oddessy "$USER@$HOST:/home/opc/oddessy/oddessy.new"
+          scp -i ~/.ssh/deploy target/release/vox-bridge "$USER@$HOST:/home/opc/vox-bridge/vox-bridge.new"
           ssh -i ~/.ssh/deploy "$USER@$HOST" \
-            'mv /home/opc/oddessy/oddessy.new /home/opc/oddessy/oddessy && \
-             chmod +x /home/opc/oddessy/oddessy && \
-             sudo chcon -t bin_t /home/opc/oddessy/oddessy && \
-             sudo systemctl restart oddessy && \
-             sleep 3 && systemctl is-active oddessy'
+            'mv /home/opc/vox-bridge/vox-bridge.new /home/opc/vox-bridge/vox-bridge && \
+             chmod +x /home/opc/vox-bridge/vox-bridge && \
+             sudo chcon -t bin_t /home/opc/vox-bridge/vox-bridge && \
+             sudo systemctl restart vox-bridge && \
+             sleep 3 && systemctl is-active vox-bridge'
