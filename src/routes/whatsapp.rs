@@ -98,9 +98,11 @@ pub async fn wa_receive(headers: HeaderMap, body: String) -> impl IntoResponse {
                     for message in value.messages.into_iter().flatten() {
                         if message.kind.as_deref() == Some("text") {
                             let Some(text) = message.text else { continue };
-                            println!("{:?}", text.body);
+                            let Some(body) = text.body else { continue };
+                            println!("{:?}", body);
                             let Some(from) = message.from else { continue };
-                            let _ = send_message("Got it", from.as_str()).await;
+                            let reply = crate::agents::agent::gemini_agent_handler(&body).await;
+                            let _ = send_message(&reply, from.as_str()).await;
                         }
                     }
                 }
