@@ -15,9 +15,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo build --release --locked
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build (static musl)
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
 
       - name: Deploy to server
         env:
@@ -29,7 +36,7 @@ jobs:
           echo "$KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
           # atomic swap: upload beside the running binary, then mv (survives ETXTBSY)
-          scp -i ~/.ssh/deploy target/release/vox-bridge "$USER@$HOST:/home/opc/vox-bridge/vox-bridge.new"
+          scp -i ~/.ssh/deploy target/x86_64-unknown-linux-musl/release/vox-bridge "$USER@$HOST:/home/opc/vox-bridge/vox-bridge.new"
           ssh -i ~/.ssh/deploy "$USER@$HOST" \
             'mv /home/opc/vox-bridge/vox-bridge.new /home/opc/vox-bridge/vox-bridge && \
              chmod +x /home/opc/vox-bridge/vox-bridge && \

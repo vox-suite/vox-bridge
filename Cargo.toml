@@ -15,3 +15,8 @@ serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["full"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "native-tls", "http2", "charset"] }
 rig = { version = "0.42.0", default-features = false, features = ["agent", "derive", "reqwest", "native-tls"] }
+
+# musl build only: compile OpenSSL from source so native-tls links statically
+# (mac uses Security.framework, so this is skipped locally)
+[target.'cfg(target_env = "musl")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
