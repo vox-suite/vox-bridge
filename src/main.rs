@@ -27,6 +27,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index_handler))
+        .route("/health", get(health_handler))
         .route("/ws", get(ws_socket_upgrade))
         .route(
             "/bridge/wa",
@@ -43,6 +44,10 @@ async fn main() {
 
 async fn index_handler() -> impl IntoResponse {
     Html("<h1>Hello</h1>")
+}
+
+async fn health_handler() -> &'static str {
+    "ok"
 }
 
 async fn ws_socket_upgrade(
@@ -76,4 +81,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         _ = (&mut send_task) => receive_task.abort(),
         _ = (&mut receive_task) => send_task.abort(),
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn health_handler_reports_ok() {
+        assert_eq!(health_handler().await, "ok");
+    }
 }
