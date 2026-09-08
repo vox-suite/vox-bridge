@@ -16,6 +16,7 @@ pub async fn gemini_agent_handler(user_query: &str) -> String {
         .agent("gemini-3.5-flash-lite")
         .preamble("You are a helpful agent")
         .tool(web_search)
+        .default_max_turns(3)
         .build();
     let response = agent.prompt(user_query).await;
 
