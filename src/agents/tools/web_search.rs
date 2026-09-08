@@ -16,7 +16,8 @@ impl WebSearch {
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            searxng_url: "http://127.0.0.1/8080/search".to_owned(),
+            searxng_url: std::env::var("SEARXNG_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:8080".to_owned()),
         }
     }
 }
@@ -48,17 +49,59 @@ impl Tool for WebSearch {
         _context: &mut rig::prelude::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        println!("web search called");
-        let response = self
+        let started_at = std::time::Instant::now();
+        let endpoint = format!("{}/search", self.searxng_url.trim_end_matches('/'));
+
+        eprintln!(
+            "agent_tool event=start tool=web_search endpoint={} query_chars={}",
+            endpoint,
+            args.query.chars().count()
+        );
+
+        let response = match self
             .client
-            .get(format!("{}/search", self.searxng_url.trim_end_matches('/')))
+            .get(&endpoint)
             .query(&[("q", args.query.as_str()), ("format", "json")])
             .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!(
+                    "agent_tool event=request_failed tool=web_search elapsed_ms={} error={}",
+                    started_at.elapsed().as_millis(),
+                    error
+                );
+                return Err(error);
+            }
+        };
+
+        eprintln!(
+            "agent_tool event=response tool=web_search status={} elapsed_ms={}",
+            response.status(),
+            started_at.elapsed().as_millis()
+        );
+
+        let response = response.error_for_status()?.text().await?;
+
+        eprintln!(
+            "agent_tool event=complete tool=web_search elapsed_ms={} response_bytes={}",
+            started_at.elapsed().as_millis(),
+            response.len()
+        );
 
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_searxng_url_targets_local_port_8080() {
+        let tool = WebSearch::new(Client::new());
+
+        assert_eq!(tool.searxng_url, "http://127.0.0.1:8080");
     }
 }
