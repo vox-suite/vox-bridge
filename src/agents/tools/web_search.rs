@@ -1,7 +1,7 @@
 use rig::tool::{Tool, ToolContext};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{io, time::Duration};
+use std::io;
 
 pub struct WebSearch {
     client: reqwest::Client,
@@ -20,13 +20,10 @@ impl WebSearch {
             .ok()
             .filter(|key| !key.trim().is_empty())
             .ok_or_else(|| io::Error::other("EXA_API_KEY is not set"))?;
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
+        let client = super::tool_dependencies::ToolDependencies::new()
             .map_err(|_| io::Error::other("Failed to create Exa client"))?;
         Ok(Self {
-            client,
+            client: client.http,
             api_key,
             endpoint: "https://api.exa.ai/search".into(),
         })
