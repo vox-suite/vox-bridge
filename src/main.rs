@@ -6,8 +6,9 @@ use axum::{
         ws::{Message, WebSocket},
     },
     response::{Html, IntoResponse},
-    routing::get,
+    routing::{get, post},
 };
+use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 mod routes;
 use std::sync::Arc;
@@ -15,15 +16,26 @@ use tokio::sync::broadcast;
 
 struct AppState {
     tx: broadcast::Sender<String>,
+    twilio: Arc<DashMap<String, crate::routes::twilio::TwilioState>>,
+    twilio_auth_token: Arc<String>,
 }
 
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
+    tracing_subscriber::fmt::init();
 
     let (tx, _rx) = broadcast::channel(100);
+    let twilio_state: Arc<DashMap<String, crate::routes::twilio::TwilioState>> =
+        Arc::new(DashMap::new());
 
-    let app_state = Arc::new(AppState { tx });
+    let app_state = Arc::new(AppState {
+        tx,
+        twilio: twilio_state,
+        twilio_auth_token: Arc::new(
+            std::env::var("TWILIO_AUTH_TOKEN").expect("TWILIO_AUTH_TOKEN is missing"),
+        ),
+    });
 
     let app = Router::new()
         .route("/", get(index_handler))
@@ -32,6 +44,10 @@ async fn main() {
         .route(
             "/bridge/wa",
             get(routes::whatsapp::wa_verify).post(routes::whatsapp::wa_receive),
+        )
+        .route(
+            "/bridge/voice",
+            post(routes::twilio::initialize_voice_socket),
         )
         .with_state(app_state);
 

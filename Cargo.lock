@@ -1197,6 +1197,7 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core",
+ "serde",
 ]
 
 [[package]]
@@ -6760,6 +6761,8 @@ name = "vox-bridge"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
+ "dashmap",
  "dotenv",
  "futures-util",
  "hex",
@@ -6769,8 +6772,12 @@ dependencies = [
  "rig",
  "serde",
  "serde_json",
+ "serde_urlencoded",
+ "sha1",
  "sha2",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
