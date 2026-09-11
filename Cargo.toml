@@ -15,12 +15,16 @@ base64 = "0.22"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["full"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "native-tls", "http2", "charset", "query"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "native-tls", "http2", "charset", "query", "stream"] }
 rig = { version = "0.42.0", default-features = false, features = ["agent", "derive", "reqwest", "native-tls"] }
 serde_urlencoded = "0.7.1"
 tracing = "0.1.44"
 tracing-subscriber = "0.3"
 dashmap = { version = "6.2.1", features = ["serde"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
+async-trait = "0.1"
+bytes = "1"
+thiserror = "2"
 
 # musl build only: compile OpenSSL from source so native-tls links statically
 # (mac uses Security.framework, so this is skipped locally)
