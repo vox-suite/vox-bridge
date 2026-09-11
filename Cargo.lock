@@ -6861,6 +6861,7 @@ dependencies = [
  "openssl",
  "reqwest 0.13.4",
  "rig",
+ "rustls",
  "serde",
  "serde_json",
  "serde_urlencoded",

@@ -25,6 +25,7 @@ struct AppState {
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
+    install_crypto_provider();
     tracing_subscriber::fmt::init();
 
     let (tx, _rx) = broadcast::channel(100);
@@ -69,6 +70,14 @@ async fn main() {
     println!("Server running on http://0.0.0.0:3000");
 
     axum::serve(listener, app).await.unwrap();
+}
+
+fn install_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .expect("failed to install the Rustls crypto provider");
+    }
 }
 
 async fn index_handler() -> impl IntoResponse {
@@ -119,5 +128,12 @@ mod tests {
     #[tokio::test]
     async fn health_handler_reports_ok() {
         assert_eq!(health_handler().await, "ok");
+    }
+
+    #[test]
+    fn startup_installs_a_rustls_crypto_provider() {
+        install_crypto_provider();
+
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
     }
 }
