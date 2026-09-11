@@ -59,6 +59,36 @@ impl AssemblyAiStt {
 pub struct AssemblyAiSession {
     sender: Mutex<SplitSink<AssemblySocket, Message>>,
     receiver: Mutex<SplitStream<AssemblySocket>>,
+    audio: Mutex<AudioBatcher>,
+}
+
+const ASSEMBLY_BATCH_BYTES: usize = 800;
+const ASSEMBLY_MINIMUM_BYTES: usize = 400;
+
+#[derive(Default)]
+struct AudioBatcher {
+    pending: Vec<u8>,
+}
+
+impl AudioBatcher {
+    fn push(&mut self, audio: Bytes) -> Vec<Bytes> {
+        self.pending.extend_from_slice(&audio);
+        let mut batches = Vec::new();
+        while self.pending.len() >= ASSEMBLY_BATCH_BYTES {
+            let remainder = self.pending.split_off(ASSEMBLY_BATCH_BYTES);
+            let batch = std::mem::replace(&mut self.pending, remainder);
+            batches.push(Bytes::from(batch));
+        }
+        batches
+    }
+
+    fn finish(&mut self) -> Option<Bytes> {
+        if self.pending.len() < ASSEMBLY_MINIMUM_BYTES {
+            self.pending.clear();
+            return None;
+        }
+        Some(Bytes::from(std::mem::take(&mut self.pending)))
+    }
 }
 
 #[derive(Deserialize)]
@@ -67,6 +97,10 @@ enum AssemblyEvent {
     Turn {
         end_of_turn: bool,
         transcript: String,
+    },
+    Error {
+        error_code: u16,
+        error: String,
     },
     SpeechStarted,
     #[serde(other)]
@@ -84,6 +118,10 @@ fn parse_event(raw: &str) -> Result<Option<SttEvent>, VoiceError> {
             transcript.trim().to_owned(),
         ))),
         AssemblyEvent::SpeechStarted => Ok(Some(SttEvent::SpeechStarted)),
+        AssemblyEvent::Error { error_code, error } => Err(VoiceError::Provider {
+            provider: "assemblyai",
+            message: format!("streaming error {error_code}: {error}"),
+        }),
         AssemblyEvent::Turn { .. } | AssemblyEvent::Other => Ok(None),
     }
 }
@@ -111,6 +149,7 @@ impl SttProvider for AssemblyAiStt {
         Ok(Arc::new(AssemblyAiSession {
             sender: Mutex::new(sender),
             receiver: Mutex::new(receiver),
+            audio: Mutex::new(AudioBatcher::default()),
         }))
     }
 }
@@ -118,12 +157,15 @@ impl SttProvider for AssemblyAiStt {
 #[async_trait]
 impl SttSession for AssemblyAiSession {
     async fn send_audio(&self, audio: Bytes) -> Result<(), VoiceError> {
-        self.sender
-            .lock()
-            .await
-            .send(audio_message(audio))
-            .await
-            .map_err(|_| provider_error("audio send failed"))
+        let batches = self.audio.lock().await.push(audio);
+        let mut sender = self.sender.lock().await;
+        for batch in batches {
+            sender
+                .send(audio_message(batch))
+                .await
+                .map_err(|_| provider_error("audio send failed"))?;
+        }
+        Ok(())
     }
 
     async fn next_event(&self) -> Result<Option<SttEvent>, VoiceError> {
@@ -142,7 +184,14 @@ impl SttSession for AssemblyAiSession {
     }
 
     async fn finish(&self) -> Result<(), VoiceError> {
+        let pending = self.audio.lock().await.finish();
         let mut sender = self.sender.lock().await;
+        if let Some(audio) = pending {
+            sender
+                .send(audio_message(audio))
+                .await
+                .map_err(|_| provider_error("audio send failed"))?;
+        }
         sender
             .send(Message::Text(r#"{"type":"Terminate"}"#.into()))
             .await
@@ -183,9 +232,44 @@ mod tests {
     }
 
     #[test]
-    fn sends_audio_as_unchanged_binary_data() {
-        let audio = Bytes::from_static(&[0xff, 0x7f]);
+    fn batches_twilio_frames_into_assembly_compliant_audio() {
+        let mut batcher = AudioBatcher::default();
 
-        assert_eq!(audio_message(audio.clone()), Message::Binary(audio));
+        for _ in 0..4 {
+            assert!(batcher.push(Bytes::from(vec![0xff; 160])).is_empty());
+        }
+
+        assert_eq!(
+            batcher.push(Bytes::from(vec![0xff; 160])),
+            vec![Bytes::from(vec![0xff; 800])]
+        );
+    }
+
+    #[test]
+    fn flushes_a_valid_partial_audio_batch() {
+        let mut batcher = AudioBatcher::default();
+
+        assert!(batcher.push(Bytes::from(vec![0xff; 480])).is_empty());
+
+        assert_eq!(batcher.finish(), Some(Bytes::from(vec![0xff; 480])));
+    }
+
+    #[test]
+    fn drops_an_audio_batch_below_assembly_minimum() {
+        let mut batcher = AudioBatcher::default();
+
+        assert!(batcher.push(Bytes::from(vec![0xff; 320])).is_empty());
+
+        assert_eq!(batcher.finish(), None);
+    }
+
+    #[test]
+    fn surfaces_streaming_error_events() {
+        let event = r#"{"type":"Error","error_code":3007,"error":"Input Duration Error"}"#;
+
+        let error = parse_event(event).unwrap_err();
+
+        assert!(error.to_string().contains("3007"));
+        assert!(error.to_string().contains("Input Duration Error"));
     }
 }
