@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::Stream;
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 use thiserror::Error;
 
 pub type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, VoiceError>> + Send>>;
@@ -28,15 +28,15 @@ pub enum VoiceError {
 }
 
 #[async_trait]
-pub trait SttSession: Send {
-    async fn send_audio(&mut self, audio: Bytes) -> Result<(), VoiceError>;
-    async fn next_event(&mut self) -> Result<Option<SttEvent>, VoiceError>;
-    async fn finish(&mut self) -> Result<(), VoiceError>;
+pub trait SttSession: Send + Sync {
+    async fn send_audio(&self, audio: Bytes) -> Result<(), VoiceError>;
+    async fn next_event(&self) -> Result<Option<SttEvent>, VoiceError>;
+    async fn finish(&self) -> Result<(), VoiceError>;
 }
 
 #[async_trait]
 pub trait SttProvider: Send + Sync {
-    async fn connect(&self) -> Result<Box<dyn SttSession>, VoiceError>;
+    async fn connect(&self) -> Result<Arc<dyn SttSession>, VoiceError>;
 }
 
 #[async_trait]

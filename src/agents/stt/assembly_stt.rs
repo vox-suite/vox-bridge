@@ -3,8 +3,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt, stream::SplitSink, stream::SplitStream};
 use serde::Deserialize;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
     tungstenite::{
@@ -58,8 +59,8 @@ impl AssemblyAiStt {
 }
 
 pub struct AssemblyAiSession {
-    sender: SplitSink<AssemblySocket, Message>,
-    receiver: SplitStream<AssemblySocket>,
+    sender: Mutex<SplitSink<AssemblySocket, Message>>,
+    receiver: Mutex<SplitStream<AssemblySocket>>,
 }
 
 #[derive(Deserialize)]
@@ -102,29 +103,34 @@ fn provider_error(message: &str) -> VoiceError {
 
 #[async_trait]
 impl SttProvider for AssemblyAiStt {
-    async fn connect(&self) -> Result<Box<dyn SttSession>, VoiceError> {
+    async fn connect(&self) -> Result<Arc<dyn SttSession>, VoiceError> {
         let request = self.request()?;
         let (socket, _) = tokio::time::timeout(Duration::from_secs(10), connect_async(request))
             .await
             .map_err(|_| VoiceError::Timeout("AssemblyAI connection"))?
             .map_err(|_| provider_error("streaming connection failed"))?;
         let (sender, receiver) = socket.split();
-        Ok(Box::new(AssemblyAiSession { sender, receiver }))
+        Ok(Arc::new(AssemblyAiSession {
+            sender: Mutex::new(sender),
+            receiver: Mutex::new(receiver),
+        }))
     }
 }
 
 #[async_trait]
 impl SttSession for AssemblyAiSession {
-    async fn send_audio(&mut self, audio: Bytes) -> Result<(), VoiceError> {
+    async fn send_audio(&self, audio: Bytes) -> Result<(), VoiceError> {
         self.sender
+            .lock()
+            .await
             .send(audio_message(audio))
             .await
             .map_err(|_| provider_error("audio send failed"))
     }
 
-    async fn next_event(&mut self) -> Result<Option<SttEvent>, VoiceError> {
+    async fn next_event(&self) -> Result<Option<SttEvent>, VoiceError> {
         loop {
-            match self.receiver.next().await {
+            match self.receiver.lock().await.next().await {
                 Some(Ok(Message::Text(raw))) => {
                     if let Some(event) = parse_event(raw.as_str())? {
                         return Ok(Some(event));
@@ -137,12 +143,13 @@ impl SttSession for AssemblyAiSession {
         }
     }
 
-    async fn finish(&mut self) -> Result<(), VoiceError> {
-        self.sender
+    async fn finish(&self) -> Result<(), VoiceError> {
+        let mut sender = self.sender.lock().await;
+        sender
             .send(Message::Text(r#"{"type":"Terminate"}"#.into()))
             .await
             .map_err(|_| provider_error("termination send failed"))?;
-        self.sender
+        sender
             .close()
             .await
             .map_err(|_| provider_error("streaming close failed"))

@@ -32,6 +32,7 @@ pub struct ProviderRegistry {
     tts: HashMap<String, Arc<dyn TtsProvider>>,
 }
 
+#[derive(Clone)]
 pub struct ProviderSet {
     pub stt: Arc<dyn SttProvider>,
     pub agent: Arc<dyn AgentProvider>,
