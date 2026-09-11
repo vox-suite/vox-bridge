@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use crate::AppState;
 
-const VOICE_WEBHOOK_URL: &str = "https://api.voxagent.in/bridge/twilio/voice";
-const VOICE_STREAM_URL: &str = "wss://api.voxagent.in/bridge/twilio/voice/stream";
+pub(crate) const VOICE_WEBHOOK_URL: &str = "https://api.voxagent.in/bridge/twilio/voice";
+pub(crate) const VOICE_STREAM_URL: &str = "wss://api.voxagent.in/bridge/twilio/voice/stream";
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -128,7 +128,7 @@ fn expected_twilio_signature(
     STANDARD.encode(mac.finalize().into_bytes())
 }
 
-fn validate_twilio_signature(
+pub(crate) fn validate_twilio_signature(
     auth_token: &str,
     public_url: &str,
     form_parameters: &[(String, String)],
@@ -159,16 +159,29 @@ mod tests {
     use super::*;
     use axum::{body::to_bytes, http::StatusCode};
     use dashmap::DashMap;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::broadcast;
 
     fn test_state(auth_token: &str) -> Arc<AppState> {
         let (tx, _rx) = broadcast::channel(1);
+        let values = HashMap::from([
+            ("ASSEMBLYAI_API_KEY".to_owned(), "assembly-key".to_owned()),
+            ("GEMINI_API_KEY".to_owned(), "gemini-key".to_owned()),
+            ("SARVAM_API_KEY".to_owned(), "sarvam-key".to_owned()),
+        ]);
+        let voice_config = crate::voice::config::VoiceConfig::from_values(|key| {
+            values.get(key).cloned()
+        })
+        .unwrap();
 
         Arc::new(AppState {
             tx,
             twilio: Arc::new(DashMap::new()),
             twilio_auth_token: Arc::new(auth_token.to_owned()),
+            voice: Arc::new(
+                crate::voice::registry::VoiceRuntime::from_config(voice_config).unwrap(),
+            ),
         })
     }
 
@@ -262,6 +275,6 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body = String::from_utf8(body.to_vec()).unwrap();
         assert!(body.contains("<Connect>"));
-        assert!(body.contains("wss://api.voxagent.in/bridge/voice/stream"));
+        assert!(body.contains("wss://api.voxagent.in/bridge/twilio/voice/stream"));
     }
 }

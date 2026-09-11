@@ -19,6 +19,7 @@ struct AppState {
     tx: broadcast::Sender<String>,
     twilio: Arc<DashMap<String, crate::routes::twilio::twilio_post::TwilioState>>,
     twilio_auth_token: Arc<String>,
+    voice: Arc<crate::voice::registry::VoiceRuntime>,
 }
 
 #[tokio::main]
@@ -29,6 +30,12 @@ async fn main() {
     let (tx, _rx) = broadcast::channel(100);
     let twilio_state: Arc<DashMap<String, crate::routes::twilio::twilio_post::TwilioState>> =
         Arc::new(DashMap::new());
+    let voice_config = crate::voice::config::VoiceConfig::from_env()
+        .expect("voice provider configuration is invalid");
+    let voice = Arc::new(
+        crate::voice::registry::VoiceRuntime::from_config(voice_config)
+            .expect("voice provider runtime initialization failed"),
+    );
 
     let app_state = Arc::new(AppState {
         tx,
@@ -36,6 +43,7 @@ async fn main() {
         twilio_auth_token: Arc::new(
             std::env::var("TWILIO_AUTH_TOKEN").expect("TWILIO_AUTH_TOKEN is missing"),
         ),
+        voice,
     });
 
     let app = Router::new()
@@ -51,7 +59,7 @@ async fn main() {
             post(routes::twilio::twilio_post::initialize_voice_socket),
         )
         .route(
-            "bridge/twilio/voice/stream",
+            "/bridge/twilio/voice/stream",
             get(routes::twilio::twilio_socket::voice_stream_handler),
         )
         .with_state(app_state);
