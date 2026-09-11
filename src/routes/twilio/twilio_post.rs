@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use crate::AppState;
 
-const VOICE_WEBHOOK_URL: &str = "https://api.voxagent.in/bridge/voice";
-const VOICE_STREAM_URL: &str = "wss://api.voxagent.in/bridge/voice/stream";
+const VOICE_WEBHOOK_URL: &str = "https://api.voxagent.in/bridge/twilio/voice";
+const VOICE_STREAM_URL: &str = "wss://api.voxagent.in/bridge/twilio/voice/stream";
 
 type HmacSha1 = Hmac<Sha1>;
 

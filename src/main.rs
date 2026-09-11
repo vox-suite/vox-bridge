@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 
 struct AppState {
     tx: broadcast::Sender<String>,
-    twilio: Arc<DashMap<String, crate::routes::twilio::TwilioState>>,
+    twilio: Arc<DashMap<String, crate::routes::twilio::twilio_post::TwilioState>>,
     twilio_auth_token: Arc<String>,
 }
 
@@ -26,7 +26,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let (tx, _rx) = broadcast::channel(100);
-    let twilio_state: Arc<DashMap<String, crate::routes::twilio::TwilioState>> =
+    let twilio_state: Arc<DashMap<String, crate::routes::twilio::twilio_post::TwilioState>> =
         Arc::new(DashMap::new());
 
     let app_state = Arc::new(AppState {
@@ -46,8 +46,12 @@ async fn main() {
             get(routes::whatsapp::wa_verify).post(routes::whatsapp::wa_receive),
         )
         .route(
-            "/bridge/voice",
-            post(routes::twilio::initialize_voice_socket),
+            "/bridge/twilio/voice",
+            post(routes::twilio::twilio_post::initialize_voice_socket),
+        )
+        .route(
+            "bridge/twilio/voice/stream",
+            get(routes::twilio::twilio_socket::voice_stream_handler),
         )
         .with_state(app_state);
 
