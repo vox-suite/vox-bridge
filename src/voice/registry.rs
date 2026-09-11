@@ -137,11 +137,7 @@ mod tests {
         let mut profile = runtime.resolver.resolve();
         profile.tts.provider = "elevenlabs".into();
 
-        let error = runtime
-            .providers
-            .providers_for(&profile)
-            .err()
-            .unwrap();
+        let error = runtime.providers.providers_for(&profile).err().unwrap();
 
         assert!(error.to_string().contains("elevenlabs"));
     }

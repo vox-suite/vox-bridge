@@ -5,10 +5,7 @@ use crate::voice::{
 use bytes::Bytes;
 use futures_util::StreamExt;
 use std::{collections::VecDeque, sync::Arc, time::Duration};
-use tokio::{
-    sync::mpsc,
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallEvent {
@@ -218,8 +215,8 @@ mod tests {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    use tokio::sync::{Mutex, mpsc};
     use tokio::sync::Notify;
+    use tokio::sync::{Mutex, mpsc};
 
     struct FakeSttProvider {
         session: Arc<FakeSttSession>,
@@ -320,10 +317,7 @@ mod tests {
         });
         let tts = Arc::new(FakeTts {
             texts: Mutex::new(Vec::new()),
-            chunks: vec![
-                Bytes::from_static(&[1, 2]),
-                Bytes::from_static(&[3, 4]),
-            ],
+            chunks: vec![Bytes::from_static(&[1, 2]), Bytes::from_static(&[3, 4])],
             pending: AtomicBool::new(false),
             fail: AtomicBool::new(false),
         });
@@ -365,7 +359,10 @@ mod tests {
         input_tx.send(CallEvent::Stop).await.unwrap();
         session.await.unwrap().unwrap();
 
-        assert_eq!(stt.audio.lock().await.as_slice(), &[Bytes::from_static(&[0xff, 0x7f])]);
+        assert_eq!(
+            stt.audio.lock().await.as_slice(),
+            &[Bytes::from_static(&[0xff, 0x7f])]
+        );
         assert_eq!(agent.transcripts.lock().await.as_slice(), &["hello"]);
         assert_eq!(tts.texts.lock().await.as_slice(), &["Hi there"]);
         assert_eq!(
@@ -415,7 +412,10 @@ mod tests {
         }
         input_tx.send(CallEvent::Stop).await.unwrap();
         session.await.unwrap().unwrap();
-        assert_eq!(agent.transcripts.lock().await.as_slice(), &["first", "second"]);
+        assert_eq!(
+            agent.transcripts.lock().await.as_slice(),
+            &["first", "second"]
+        );
     }
 
     #[tokio::test]
@@ -447,7 +447,10 @@ mod tests {
         }
         input_tx.send(CallEvent::Stop).await.unwrap();
         session.await.unwrap().unwrap();
-        assert_eq!(agent.transcripts.lock().await.as_slice(), &["first", "second"]);
+        assert_eq!(
+            agent.transcripts.lock().await.as_slice(),
+            &["first", "second"]
+        );
     }
 
     #[tokio::test]

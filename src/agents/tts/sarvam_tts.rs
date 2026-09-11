@@ -68,7 +68,10 @@ impl TtsProvider for SarvamTts {
             speech_sample_rate: 8000,
             output_audio_codec: "mulaw",
         };
-        let url = format!("{}/text-to-speech/stream", self.endpoint.trim_end_matches('/'));
+        let url = format!(
+            "{}/text-to-speech/stream",
+            self.endpoint.trim_end_matches('/')
+        );
         let response = tokio::time::timeout(
             Duration::from_secs(15),
             self.http
@@ -104,9 +107,7 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex};
 
-    async fn test_server(
-        status: StatusCode,
-    ) -> (String, Arc<Mutex<Option<(HeaderMap, Value)>>>) {
+    async fn test_server(status: StatusCode) -> (String, Arc<Mutex<Option<(HeaderMap, Value)>>>) {
         let captured = Arc::new(Mutex::new(None));
         let handler_capture = captured.clone();
         let app = Router::new().route(
@@ -119,8 +120,12 @@ mod tests {
                         Response::builder()
                             .status(status)
                             .body(Body::from_stream(stream::iter([
-                                Ok::<_, std::convert::Infallible>(bytes::Bytes::from_static(&[1, 2])),
-                                Ok::<_, std::convert::Infallible>(bytes::Bytes::from_static(&[3, 4])),
+                                Ok::<_, std::convert::Infallible>(bytes::Bytes::from_static(&[
+                                    1, 2,
+                                ])),
+                                Ok::<_, std::convert::Infallible>(bytes::Bytes::from_static(&[
+                                    3, 4,
+                                ])),
                             ])))
                             .unwrap()
                     } else {
@@ -132,9 +137,7 @@ mod tests {
                 }
             }),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (format!("http://{address}"), captured)

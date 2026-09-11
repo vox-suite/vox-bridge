@@ -51,9 +51,7 @@ impl AssemblyAiStt {
             .map_err(|_| provider_error("invalid streaming endpoint"))?;
         let authorization = HeaderValue::from_str(&self.api_key)
             .map_err(|_| VoiceError::Configuration("ASSEMBLYAI_API_KEY is invalid".into()))?;
-        request
-            .headers_mut()
-            .insert(AUTHORIZATION, authorization);
+        request.headers_mut().insert(AUTHORIZATION, authorization);
         Ok(request)
     }
 }
@@ -82,9 +80,9 @@ fn parse_event(raw: &str) -> Result<Option<SttEvent>, VoiceError> {
         AssemblyEvent::Turn {
             end_of_turn: true,
             transcript,
-        } if !transcript.trim().is_empty() => {
-            Ok(Some(SttEvent::FinalTranscript(transcript.trim().to_owned())))
-        }
+        } if !transcript.trim().is_empty() => Ok(Some(SttEvent::FinalTranscript(
+            transcript.trim().to_owned(),
+        ))),
         AssemblyEvent::SpeechStarted => Ok(Some(SttEvent::SpeechStarted)),
         AssemblyEvent::Turn { .. } | AssemblyEvent::Other => Ok(None),
     }
@@ -164,7 +162,8 @@ mod tests {
 
     #[test]
     fn emits_only_final_non_empty_turns() {
-        let final_turn = r#"{"type":"Turn","turn_order":1,"end_of_turn":true,"transcript":"Book a table"}"#;
+        let final_turn =
+            r#"{"type":"Turn","turn_order":1,"end_of_turn":true,"transcript":"Book a table"}"#;
         let partial = r#"{"type":"Turn","turn_order":1,"end_of_turn":false,"transcript":"Book"}"#;
         let empty = r#"{"type":"Turn","turn_order":2,"end_of_turn":true,"transcript":"   "}"#;
 

@@ -221,11 +221,7 @@ mod tests {
 
     #[test]
     fn rejects_missing_provider_credentials() {
-        for key in [
-            "ASSEMBLYAI_API_KEY",
-            "GEMINI_API_KEY",
-            "SARVAM_API_KEY",
-        ] {
+        for key in ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY", "SARVAM_API_KEY"] {
             let mut values = valid_values();
             values.remove(key);
 

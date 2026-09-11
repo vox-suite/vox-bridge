@@ -1,3 +1,11 @@
+use crate::{
+    AppState,
+    routes::twilio::twilio_post::{VOICE_STREAM_URL, validate_twilio_signature},
+    voice::{
+        provider::VoiceError,
+        session::{CallCommand, CallEvent, run_voice_session},
+    },
+};
 use axum::{
     extract::{
         State, WebSocketUpgrade,
@@ -8,17 +16,9 @@ use axum::{
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use crate::{
-    routes::twilio::twilio_post::{VOICE_STREAM_URL, validate_twilio_signature},
-    voice::{
-        provider::VoiceError,
-        session::{CallCommand, CallEvent, run_voice_session},
-    },
-    AppState,
-};
-use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -150,7 +150,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         match receiver.next().await {
             Some(Ok(Message::Text(raw))) => match parse_inbound(raw.as_str())? {
                 InboundStreamMessage::Connected { protocol, version } => {
-                tracing::info!(protocol, version, "Twilio handshake accepted");
+                    tracing::info!(protocol, version, "Twilio handshake accepted");
                 }
                 InboundStreamMessage::Start { start } => break start,
                 InboundStreamMessage::Stop => return Ok(()),
@@ -225,13 +225,12 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         input_tx.send(CallEvent::Stop),
     )
     .await;
-    if !voice_task.is_finished() {
-        if tokio::time::timeout(std::time::Duration::from_secs(5), &mut voice_task)
+    if !voice_task.is_finished()
+        && tokio::time::timeout(std::time::Duration::from_secs(5), &mut voice_task)
             .await
             .is_err()
-        {
-            voice_task.abort();
-        }
+    {
+        voice_task.abort();
     }
     state.twilio.remove(&call_sid);
     tracing::info!(%stream_sid, %call_sid, "Twilio media stream closed");
@@ -269,8 +268,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(start, InboundStreamMessage::Start { start } if start.stream_sid == "MZ123" && start.call_sid == "CA123"));
-        assert!(matches!(media, InboundStreamMessage::Media { stream_sid, media } if stream_sid == "MZ123" && media.payload == "AQI="));
+        assert!(
+            matches!(start, InboundStreamMessage::Start { start } if start.stream_sid == "MZ123" && start.call_sid == "CA123")
+        );
+        assert!(
+            matches!(media, InboundStreamMessage::Media { stream_sid, media } if stream_sid == "MZ123" && media.payload == "AQI=")
+        );
     }
 
     #[test]

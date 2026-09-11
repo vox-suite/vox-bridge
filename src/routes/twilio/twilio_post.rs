@@ -170,10 +170,8 @@ mod tests {
             ("GEMINI_API_KEY".to_owned(), "gemini-key".to_owned()),
             ("SARVAM_API_KEY".to_owned(), "sarvam-key".to_owned()),
         ]);
-        let voice_config = crate::voice::config::VoiceConfig::from_values(|key| {
-            values.get(key).cloned()
-        })
-        .unwrap();
+        let voice_config =
+            crate::voice::config::VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
 
         Arc::new(AppState {
             tx,

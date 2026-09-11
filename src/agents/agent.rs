@@ -17,33 +17,35 @@ impl GeminiAgent {
     }
 
     async fn prompt(&self, user_query: &str) -> Result<String, VoiceError> {
-    eprintln!(
-        "agent event=start provider=gemini prompt_chars={}",
-        user_query.chars().count()
-    );
+        eprintln!(
+            "agent event=start provider=gemini prompt_chars={}",
+            user_query.chars().count()
+        );
 
-    let web_search = match crate::agents::tools::web_search::WebSearch::from_env() {
-        Ok(search) => search,
-        Err(_) => {
-            return Err(VoiceError::Configuration(
-                "EXA_API_KEY is required by the Gemini agent".into(),
-            ));
-        }
-    };
-    let tool_dep = crate::agents::tools::tool_dependencies::ToolDependencies::new()
-        .map_err(|_| provider_error("tool client creation failed"))?;
+        let web_search = match crate::agents::tools::web_search::WebSearch::from_env() {
+            Ok(search) => search,
+            Err(_) => {
+                return Err(VoiceError::Configuration(
+                    "EXA_API_KEY is required by the Gemini agent".into(),
+                ));
+            }
+        };
+        let tool_dep = crate::agents::tools::tool_dependencies::ToolDependencies::new()
+            .map_err(|_| provider_error("tool client creation failed"))?;
 
-    let google_maps_key = std::env::var("GOOGLE_MAPS_API_KEY").ok();
-    let search_places = crate::agents::tools::google_maps::SearchPlaces::new(
-        tool_dep.http.clone(),
-        google_maps_key.clone(),
-    );
-    let get_route =
-        crate::agents::tools::google_maps::GetRoute::new(tool_dep.http.clone(), google_maps_key);
+        let google_maps_key = std::env::var("GOOGLE_MAPS_API_KEY").ok();
+        let search_places = crate::agents::tools::google_maps::SearchPlaces::new(
+            tool_dep.http.clone(),
+            google_maps_key.clone(),
+        );
+        let get_route = crate::agents::tools::google_maps::GetRoute::new(
+            tool_dep.http.clone(),
+            google_maps_key,
+        );
 
-    let client = gemini::Client::new(&self.api_key)
-        .map_err(|_| provider_error("client creation failed"))?;
-    let agent = client
+        let client = gemini::Client::new(&self.api_key)
+            .map_err(|_| provider_error("client creation failed"))?;
+        let agent = client
         .agent(&self.model)
         .preamble(
             "You are a helpful agent. Use web_search when current information is needed and cite \
@@ -58,15 +60,15 @@ impl GeminiAgent {
         .tool(get_route)
         .default_max_turns(10)
         .build();
-    let message = agent
-        .prompt(user_query)
-        .await
-        .map_err(|_| provider_error("response generation failed"))?;
-    eprintln!(
-        "agent event=complete provider=gemini response_chars={}",
-        message.chars().count()
-    );
-    Ok(message)
+        let message = agent
+            .prompt(user_query)
+            .await
+            .map_err(|_| provider_error("response generation failed"))?;
+        eprintln!(
+            "agent event=complete provider=gemini response_chars={}",
+            message.chars().count()
+        );
+        Ok(message)
     }
 }
 
@@ -89,8 +91,8 @@ pub async fn gemini_agent_handler(user_query: &str) -> String {
         Ok(value) => value,
         Err(_) => return "Gemini configuration error".into(),
     };
-    let model = std::env::var("GEMINI_MODEL")
-        .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_owned());
+    let model =
+        std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_owned());
     match GeminiAgent::new(api_key, model).respond(user_query).await {
         Ok(message) => message,
         Err(error) => error.to_string(),
