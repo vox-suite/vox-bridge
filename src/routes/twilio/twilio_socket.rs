@@ -170,12 +170,23 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
     validate_start(&state.twilio, &start)?;
     let call_sid = start.call_sid.clone();
     let stream_sid = start.stream_sid;
+    let accepted_call = state
+        .twilio
+        .get(&call_sid)
+        .map(|entry| entry.clone())
+        .ok_or_else(|| VoiceError::Protocol("Twilio stream has no accepted call".into()))?;
+    let context = crate::voice::context::CallContext {
+        channel: "phone".into(),
+        external_identity: accepted_call.from,
+        external_conversation_id: call_sid.clone(),
+        initiation_context: None,
+    };
     tracing::info!(%stream_sid, %call_sid, "Twilio stream started");
     let profile = state.voice.resolver.resolve();
     let providers = state.voice.providers.providers_for(&profile)?;
     let (input_tx, input_rx) = mpsc::channel(64);
     let (output_tx, mut output_rx) = mpsc::channel(64);
-    let mut voice_task = tokio::spawn(run_voice_session(providers, input_rx, output_tx));
+    let mut voice_task = tokio::spawn(run_voice_session(providers, context, input_rx, output_tx));
     let result = async {
         loop {
             tokio::select! {

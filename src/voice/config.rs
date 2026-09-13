@@ -36,7 +36,8 @@ pub struct VoiceProfile {
 #[derive(Clone)]
 pub(crate) struct VoiceSecrets {
     pub assemblyai_api_key: String,
-    pub gemini_api_key: String,
+    pub core_url: String,
+    pub core_service_token: String,
     pub sarvam_api_key: String,
 }
 
@@ -54,8 +55,8 @@ impl VoiceConfig {
             "VOX_TTS_PROVIDER",
             "ASSEMBLYAI_API_KEY",
             "ASSEMBLYAI_SPEECH_MODEL",
-            "GEMINI_API_KEY",
-            "GEMINI_MODEL",
+            "VOX_CORE_URL",
+            "VOX_CORE_SERVICE_TOKEN",
             "SARVAM_API_KEY",
             "SARVAM_TTS_MODEL",
             "SARVAM_LANGUAGE_CODE",
@@ -73,14 +74,15 @@ impl VoiceConfig {
         F: Fn(&str) -> Option<String>,
     {
         let stt_provider = value_or(&get, "VOX_STT_PROVIDER", "assemblyai");
-        let agent_provider = value_or(&get, "VOX_AGENT_PROVIDER", "gemini");
+        let agent_provider = value_or(&get, "VOX_AGENT_PROVIDER", "vox-core");
         let tts_provider = value_or(&get, "VOX_TTS_PROVIDER", "sarvam");
         require_provider("STT", &stt_provider, "assemblyai")?;
-        require_provider("agent", &agent_provider, "gemini")?;
+        require_provider("agent", &agent_provider, "vox-core")?;
         require_provider("TTS", &tts_provider, "sarvam")?;
 
         let assemblyai_api_key = required(&get, "ASSEMBLYAI_API_KEY")?;
-        let gemini_api_key = required(&get, "GEMINI_API_KEY")?;
+        let core_url = required(&get, "VOX_CORE_URL")?;
+        let core_service_token = required(&get, "VOX_CORE_SERVICE_TOKEN")?;
         let sarvam_api_key = required(&get, "SARVAM_API_KEY")?;
         let tts_model = value_or(&get, "SARVAM_TTS_MODEL", "bulbul:v3");
         let default_speaker = match tts_model.as_str() {
@@ -106,7 +108,7 @@ impl VoiceConfig {
                 },
                 agent: ProviderSelection {
                     provider: agent_provider,
-                    model: value_or(&get, "GEMINI_MODEL", "gemini-3.5-flash-lite"),
+                    model: "default".into(),
                 },
                 tts: TtsSelection {
                     provider: tts_provider,
@@ -118,7 +120,8 @@ impl VoiceConfig {
             },
             secrets: VoiceSecrets {
                 assemblyai_api_key,
-                gemini_api_key,
+                core_url,
+                core_service_token,
                 sarvam_api_key,
             },
         })
@@ -180,7 +183,8 @@ mod tests {
     fn valid_values() -> HashMap<String, String> {
         HashMap::from([
             ("ASSEMBLYAI_API_KEY".into(), "assembly-key".into()),
-            ("GEMINI_API_KEY".into(), "gemini-key".into()),
+            ("VOX_CORE_URL".into(), "http://core-api:3001".into()),
+            ("VOX_CORE_SERVICE_TOKEN".into(), "service-token".into()),
             ("SARVAM_API_KEY".into(), "sarvam-key".into()),
         ])
     }
@@ -192,8 +196,8 @@ mod tests {
 
         assert_eq!(config.profile.stt.provider, "assemblyai");
         assert_eq!(config.profile.stt.model, "universal-3-5-pro");
-        assert_eq!(config.profile.agent.provider, "gemini");
-        assert_eq!(config.profile.agent.model, "gemini-3.5-flash-lite");
+        assert_eq!(config.profile.agent.provider, "vox-core");
+        assert_eq!(config.profile.agent.model, "default");
         assert_eq!(config.profile.tts.provider, "sarvam");
         assert_eq!(config.profile.tts.model, "bulbul:v3");
         assert_eq!(config.profile.tts.language_code, "en-IN");
@@ -221,7 +225,12 @@ mod tests {
 
     #[test]
     fn rejects_missing_provider_credentials() {
-        for key in ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY", "SARVAM_API_KEY"] {
+        for key in [
+            "ASSEMBLYAI_API_KEY",
+            "VOX_CORE_URL",
+            "VOX_CORE_SERVICE_TOKEN",
+            "SARVAM_API_KEY",
+        ] {
             let mut values = valid_values();
             values.remove(key);
 

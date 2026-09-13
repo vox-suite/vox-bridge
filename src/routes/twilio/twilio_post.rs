@@ -16,7 +16,7 @@ pub(crate) const VOICE_STREAM_URL: &str = "wss://api.voxagent.in/bridge/twilio/v
 
 type HmacSha1 = Hmac<Sha1>;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct TwilioState {
     pub call_sid: String,
     pub account_sid: String,
@@ -167,7 +167,11 @@ mod tests {
         let (tx, _rx) = broadcast::channel(1);
         let values = HashMap::from([
             ("ASSEMBLYAI_API_KEY".to_owned(), "assembly-key".to_owned()),
-            ("GEMINI_API_KEY".to_owned(), "gemini-key".to_owned()),
+            ("VOX_CORE_URL".to_owned(), "http://core-api:3001".to_owned()),
+            (
+                "VOX_CORE_SERVICE_TOKEN".to_owned(),
+                "service-token".to_owned(),
+            ),
             ("SARVAM_API_KEY".to_owned(), "sarvam-key".to_owned()),
         ]);
         let voice_config =

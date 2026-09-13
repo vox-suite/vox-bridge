@@ -1,11 +1,13 @@
+use crate::{AppState, voice::context::CallContext};
 use axum::{
-    extract::Query,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
+use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct VerifyParams {
@@ -85,7 +87,11 @@ fn valid_signature(headers: &HeaderMap, body: &str) -> bool {
     mac.verify_slice(&their_sig).is_ok()
 }
 
-pub async fn wa_receive(headers: HeaderMap, body: String) -> impl IntoResponse {
+pub async fn wa_receive(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: String,
+) -> impl IntoResponse {
     if !valid_signature(&headers, &body) {
         eprintln!("wa: rejected unsigned/invalid request");
         return StatusCode::FORBIDDEN;
@@ -99,10 +105,21 @@ pub async fn wa_receive(headers: HeaderMap, body: String) -> impl IntoResponse {
                         if message.kind.as_deref() == Some("text") {
                             let Some(text) = message.text else { continue };
                             let Some(body) = text.body else { continue };
-                            println!("{:?}", body);
                             let Some(from) = message.from else { continue };
-                            let reply = crate::agents::agent::gemini_agent_handler(&body).await;
-                            let _ = send_message(&reply, from.as_str()).await;
+                            let profile = state.voice.resolver.resolve();
+                            let Ok(providers) = state.voice.providers.providers_for(&profile)
+                            else {
+                                continue;
+                            };
+                            let context = CallContext {
+                                channel: "whatsapp".into(),
+                                external_identity: from.clone(),
+                                external_conversation_id: format!("whatsapp:{from}"),
+                                initiation_context: None,
+                            };
+                            if let Ok(reply) = providers.agent.respond(&context, &body).await {
+                                let _ = send_message(&reply, from.as_str()).await;
+                            }
                         }
                     }
                 }

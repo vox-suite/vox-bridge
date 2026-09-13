@@ -1,4 +1,5 @@
 use crate::voice::{
+    context::CallContext,
     provider::{SttEvent, VoiceError},
     registry::ProviderSet,
 };
@@ -29,6 +30,7 @@ enum SessionSignal {
 
 pub async fn run_voice_session(
     providers: ProviderSet,
+    context: CallContext,
     mut input: mpsc::Receiver<CallEvent>,
     output: mpsc::Sender<CallCommand>,
 ) -> Result<(), VoiceError> {
@@ -93,6 +95,7 @@ pub async fn run_voice_session(
                     response_number += 1;
                     active_response = Some(spawn_response(
                         response_number,
+                        context.clone(),
                         transcript,
                         providers.agent.clone(),
                         providers.tts.clone(),
@@ -108,6 +111,7 @@ pub async fn run_voice_session(
                     response_number += 1;
                     active_response = Some(spawn_response(
                         response_number,
+                        context.clone(),
                         transcript,
                         providers.agent.clone(),
                         providers.tts.clone(),
@@ -123,6 +127,7 @@ pub async fn run_voice_session(
                         response_number += 1;
                         active_response = Some(spawn_response(
                             response_number,
+                            context.clone(),
                             transcript,
                             providers.agent.clone(),
                             providers.tts.clone(),
@@ -156,6 +161,7 @@ pub async fn run_voice_session(
 
 fn spawn_response(
     number: u64,
+    context: CallContext,
     transcript: String,
     agent: Arc<dyn crate::voice::provider::AgentProvider>,
     tts: Arc<dyn crate::voice::provider::TtsProvider>,
@@ -163,7 +169,7 @@ fn spawn_response(
     signal: mpsc::Sender<SessionSignal>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let result = stream_response(number, &transcript, agent, tts, output).await;
+        let result = stream_response(number, &context, &transcript, agent, tts, output).await;
         if let Err(error) = result {
             tracing::warn!(provider_error = %error, "voice response failed");
         }
@@ -173,14 +179,16 @@ fn spawn_response(
 
 async fn stream_response(
     number: u64,
+    context: &CallContext,
     transcript: &str,
     agent: Arc<dyn crate::voice::provider::AgentProvider>,
     tts: Arc<dyn crate::voice::provider::TtsProvider>,
     output: mpsc::Sender<CallCommand>,
 ) -> Result<(), VoiceError> {
-    let response = tokio::time::timeout(Duration::from_secs(30), agent.respond(transcript))
-        .await
-        .map_err(|_| VoiceError::Timeout("agent response"))??;
+    let response =
+        tokio::time::timeout(Duration::from_secs(30), agent.respond(context, transcript))
+            .await
+            .map_err(|_| VoiceError::Timeout("agent response"))??;
     let mut audio = tts.synthesize(&response).await?;
     while let Some(chunk) = tokio::time::timeout(Duration::from_secs(10), audio.next())
         .await
@@ -267,7 +275,11 @@ mod tests {
 
     #[async_trait]
     impl AgentProvider for FakeAgent {
-        async fn respond(&self, transcript: &str) -> Result<String, VoiceError> {
+        async fn respond(
+            &self,
+            _context: &CallContext,
+            transcript: &str,
+        ) -> Result<String, VoiceError> {
             self.transcripts.lock().await.push(transcript.into());
             if transcript == "first"
                 && let Some(gate) = self.first_gate.lock().await.clone()
@@ -275,6 +287,15 @@ mod tests {
                 gate.notified().await;
             }
             Ok(self.response.clone())
+        }
+    }
+
+    fn call_context() -> CallContext {
+        CallContext {
+            channel: "phone".into(),
+            external_identity: "+14155550100".into(),
+            external_conversation_id: "CA123".into(),
+            initiation_context: None,
         }
     }
 
@@ -341,7 +362,12 @@ mod tests {
         let (providers, event_tx, stt, agent, tts) = providers();
         let (input_tx, input_rx) = mpsc::channel(8);
         let (output_tx, mut output_rx) = mpsc::channel(8);
-        let session = tokio::spawn(run_voice_session(providers, input_rx, output_tx));
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
 
         input_tx
             .send(CallEvent::Audio(Bytes::from_static(&[0xff, 0x7f])))
@@ -382,7 +408,12 @@ mod tests {
         tts.pending.store(true, Ordering::SeqCst);
         let (input_tx, input_rx) = mpsc::channel(8);
         let (output_tx, mut output_rx) = mpsc::channel(8);
-        let session = tokio::spawn(run_voice_session(providers, input_rx, output_tx));
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
         event_tx
             .send(SttEvent::FinalTranscript("first".into()))
             .await
@@ -425,7 +456,12 @@ mod tests {
         *agent.first_gate.lock().await = Some(gate.clone());
         let (input_tx, input_rx) = mpsc::channel(8);
         let (output_tx, mut output_rx) = mpsc::channel(16);
-        let session = tokio::spawn(run_voice_session(providers, input_rx, output_tx));
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
 
         event_tx
             .send(SttEvent::FinalTranscript("first".into()))
@@ -459,7 +495,12 @@ mod tests {
         tts.fail.store(true, Ordering::SeqCst);
         let (input_tx, input_rx) = mpsc::channel(8);
         let (output_tx, mut output_rx) = mpsc::channel(8);
-        let session = tokio::spawn(run_voice_session(providers, input_rx, output_tx));
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
         event_tx
             .send(SttEvent::FinalTranscript("first".into()))
             .await

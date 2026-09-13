@@ -1,3 +1,4 @@
+use super::context::CallContext;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::Stream;
@@ -41,7 +42,7 @@ pub trait SttProvider: Send + Sync {
 
 #[async_trait]
 pub trait AgentProvider: Send + Sync {
-    async fn respond(&self, transcript: &str) -> Result<String, VoiceError>;
+    async fn respond(&self, context: &CallContext, transcript: &str) -> Result<String, VoiceError>;
 }
 
 #[async_trait]
