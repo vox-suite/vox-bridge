@@ -43,6 +43,9 @@ pub trait SttProvider: Send + Sync {
 #[async_trait]
 pub trait AgentProvider: Send + Sync {
     async fn respond(&self, context: &CallContext, transcript: &str) -> Result<String, VoiceError>;
+    async fn complete(&self, _context: &CallContext) -> Result<(), VoiceError> {
+        Ok(())
+    }
 }
 
 #[async_trait]

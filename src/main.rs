@@ -1,5 +1,8 @@
 mod agents;
+mod routes;
+mod telephony;
 mod voice;
+
 use axum::{
     Router,
     extract::{
@@ -11,15 +14,19 @@ use axum::{
 };
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
-mod routes;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-struct AppState {
-    tx: broadcast::Sender<String>,
-    twilio: Arc<DashMap<String, crate::routes::twilio::twilio_post::TwilioState>>,
-    twilio_auth_token: Arc<String>,
-    voice: Arc<crate::voice::registry::VoiceRuntime>,
+pub struct AppState {
+    pub tx: broadcast::Sender<String>,
+    pub twilio: Arc<DashMap<String, crate::routes::twilio::twilio_post::TwilioState>>,
+    pub twilio_account_sid: Arc<String>,
+    pub twilio_auth_token: Arc<String>,
+    pub twilio_from_number: Arc<String>,
+    pub service_token: Arc<String>,
+    pub core_url: Arc<String>,
+    pub telephony: Option<Arc<dyn crate::telephony::TelephonyClient>>,
+    pub voice: Arc<crate::voice::registry::VoiceRuntime>,
 }
 
 #[tokio::main]
@@ -38,12 +45,38 @@ async fn main() {
             .expect("voice provider runtime initialization failed"),
     );
 
+    let twilio_account_sid = std::env::var("TWILIO_ACCOUNT_SID").unwrap_or_default();
+    let twilio_auth_token =
+        std::env::var("TWILIO_AUTH_TOKEN").expect("TWILIO_AUTH_TOKEN is missing");
+    let twilio_from_number = std::env::var("TWILIO_FROM_NUMBER").unwrap_or_default();
+    let service_token = std::env::var("VOX_CORE_SERVICE_TOKEN").unwrap_or_default();
+    let core_url =
+        std::env::var("VOX_CORE_URL").unwrap_or_else(|_| "http://core-api:3001".to_string());
+
+    let telephony: Option<Arc<dyn crate::telephony::TelephonyClient>> =
+        if !twilio_account_sid.is_empty() && !twilio_from_number.is_empty() {
+            crate::telephony::twilio_client::TwilioApiClient::new(
+                twilio_account_sid.clone(),
+                twilio_auth_token.clone(),
+                twilio_from_number.clone(),
+                crate::routes::twilio::twilio_post::VOICE_STREAM_URL.to_string(),
+                crate::routes::twilio::twilio_status::VOICE_STATUS_URL.to_string(),
+            )
+            .ok()
+            .map(|client| Arc::new(client) as Arc<dyn crate::telephony::TelephonyClient>)
+        } else {
+            None
+        };
+
     let app_state = Arc::new(AppState {
         tx,
         twilio: twilio_state,
-        twilio_auth_token: Arc::new(
-            std::env::var("TWILIO_AUTH_TOKEN").expect("TWILIO_AUTH_TOKEN is missing"),
-        ),
+        twilio_account_sid: Arc::new(twilio_account_sid),
+        twilio_auth_token: Arc::new(twilio_auth_token),
+        twilio_from_number: Arc::new(twilio_from_number),
+        service_token: Arc::new(service_token),
+        core_url: Arc::new(core_url),
+        telephony,
         voice,
     });
 
@@ -62,6 +95,14 @@ async fn main() {
         .route(
             "/bridge/twilio/voice/stream",
             get(routes::twilio::twilio_socket::voice_stream_handler),
+        )
+        .route(
+            "/bridge/twilio/voice/status",
+            post(routes::twilio::twilio_status::handle_voice_status),
+        )
+        .route(
+            "/internal/v1/actions/outbound-call",
+            post(routes::internal::outbound_call::handle_outbound_call),
         )
         .with_state(app_state);
 

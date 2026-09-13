@@ -23,6 +23,8 @@ pub struct TwilioState {
     pub from: String,
     pub to: String,
     pub call_status: Option<String>,
+    pub opening_instruction: Option<String>,
+    pub action_id: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -83,6 +85,8 @@ pub async fn initialize_voice_socket(
             from: params.from,
             to: params.to,
             call_status: params.call_status,
+            opening_instruction: None,
+            action_id: None,
         },
     );
 
@@ -180,7 +184,12 @@ mod tests {
         Arc::new(AppState {
             tx,
             twilio: Arc::new(DashMap::new()),
+            twilio_account_sid: Arc::new("AC123".to_owned()),
             twilio_auth_token: Arc::new(auth_token.to_owned()),
+            twilio_from_number: Arc::new("+14155550100".to_owned()),
+            service_token: Arc::new("service-token".to_owned()),
+            core_url: Arc::new("http://core-api:3001".to_owned()),
+            telephony: None,
             voice: Arc::new(
                 crate::voice::registry::VoiceRuntime::from_config(voice_config).unwrap(),
             ),

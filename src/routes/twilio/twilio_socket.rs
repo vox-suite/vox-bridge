@@ -179,14 +179,19 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         channel: "phone".into(),
         external_identity: accepted_call.from,
         external_conversation_id: call_sid.clone(),
-        initiation_context: None,
+        initiation_context: accepted_call.opening_instruction.clone(),
     };
     tracing::info!(%stream_sid, %call_sid, "Twilio stream started");
     let profile = state.voice.resolver.resolve();
     let providers = state.voice.providers.providers_for(&profile)?;
     let (input_tx, input_rx) = mpsc::channel(64);
     let (output_tx, mut output_rx) = mpsc::channel(64);
-    let mut voice_task = tokio::spawn(run_voice_session(providers, context, input_rx, output_tx));
+    let mut voice_task = tokio::spawn(run_voice_session(
+        providers.clone(),
+        context.clone(),
+        input_rx,
+        output_tx,
+    ));
     let result = async {
         loop {
             tokio::select! {
@@ -243,6 +248,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
     {
         voice_task.abort();
     }
+    let _ = providers.agent.complete(&context).await;
     state.twilio.remove(&call_sid);
     tracing::info!(%stream_sid, %call_sid, "Twilio media stream closed");
     result
@@ -342,6 +348,8 @@ mod tests {
                 from: "+14155550100".into(),
                 to: "+14155550101".into(),
                 call_status: None,
+                opening_instruction: None,
+                action_id: None,
             },
         );
         assert!(validate_start(&calls, &start).is_ok());

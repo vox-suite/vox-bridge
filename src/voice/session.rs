@@ -81,6 +81,19 @@ pub async fn run_voice_session(
     let mut pending_transcripts = VecDeque::new();
     let mut failure = None;
 
+    if let Some(ref opening) = context.initiation_context {
+        response_number += 1;
+        active_response = Some(spawn_response(
+            response_number,
+            context.clone(),
+            opening.clone(),
+            providers.agent.clone(),
+            providers.tts.clone(),
+            output.clone(),
+            signal_tx.clone(),
+        ));
+    }
+
     while let Some(signal) = signal_rx.recv().await {
         match signal {
             SessionSignal::Stt(SttEvent::SpeechStarted) => {
