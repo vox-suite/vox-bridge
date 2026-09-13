@@ -31,14 +31,19 @@ jobs:
           KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           HOST: ${{ secrets.SERVER_HOST }}
           USER: ${{ secrets.SERVER_USER }}
+          CORE_SERVICE_TOKEN: ${{ secrets.VOX_CORE_SERVICE_TOKEN }}
         run: |
+          test -n "$CORE_SERVICE_TOKEN"
           mkdir -p ~/.ssh
           echo "$KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf 'VOX_CORE_SERVICE_TOKEN=%s\n' "$CORE_SERVICE_TOKEN" > ~/.ssh/vox-core.env
+          chmod 600 ~/.ssh/vox-core.env
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/deploy "$USER@$HOST" 'mkdir -p /home/admin/vox-bridge'
           scp -i ~/.ssh/deploy target/release/vox-bridge "$USER@$HOST:/home/admin/vox-bridge/vox-bridge.new"
           scp -i ~/.ssh/deploy ops/vox-bridge.service "$USER@$HOST:/tmp/vox-bridge.service"
           scp -i ~/.ssh/deploy ops/Caddyfile "$USER@$HOST:/tmp/Caddyfile.vox"
+          scp -i ~/.ssh/deploy ~/.ssh/vox-core.env "$USER@$HOST:/tmp/vox-core.env"
           ssh -i ~/.ssh/deploy "$USER@$HOST" \
             'set -eu; \
              chmod +x /home/admin/vox-bridge/vox-bridge.new; \
@@ -46,6 +51,9 @@ jobs:
              sudo install -o root -g root -m 644 /tmp/vox-bridge.service /etc/systemd/system/vox-bridge.service; \
              sudo touch /etc/vox-bridge.env; \
              sudo chmod 600 /etc/vox-bridge.env; \
+             sudo sed -i "/^VOX_CORE_SERVICE_TOKEN=/d" /etc/vox-bridge.env; \
+             sudo sh -c "cat /tmp/vox-core.env >> /etc/vox-bridge.env"; \
+             rm /tmp/vox-core.env; \
              caddy validate --config /tmp/Caddyfile.vox; \
              sudo install -o root -g root -m 644 /tmp/Caddyfile.vox /etc/caddy/Caddyfile; \
              sudo systemctl daemon-reload; \
