@@ -25,6 +25,7 @@ pub struct TwilioState {
     pub call_status: Option<String>,
     pub opening_instruction: Option<String>,
     pub action_id: Option<String>,
+    pub external_conversation_id: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -77,6 +78,7 @@ pub async fn initialize_voice_socket(
     }
 
     let call_sid = params.call_sid.clone();
+    let external_conversation_id = params.call_sid.clone();
     app_state.twilio.insert(
         params.call_sid.clone(),
         TwilioState {
@@ -87,6 +89,7 @@ pub async fn initialize_voice_socket(
             call_status: params.call_status,
             opening_instruction: None,
             action_id: None,
+            external_conversation_id,
         },
     );
 

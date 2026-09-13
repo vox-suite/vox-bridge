@@ -19,7 +19,7 @@ use base64::engine::general_purpose::STANDARD;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc;
 
 #[derive(Deserialize, Debug)]
@@ -33,6 +33,8 @@ pub struct TwilioStartPayload {
     pub stream_sid: String,
     #[serde(rename = "callSid")]
     pub call_sid: String,
+    #[serde(rename = "customParameters", default)]
+    pub custom_parameters: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,6 +169,9 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
             }
         }
     };
+    if !state.twilio.contains_key(&start.call_sid) {
+        restore_outbound_state(&state, &start)?;
+    }
     validate_start(&state.twilio, &start)?;
     let call_sid = start.call_sid.clone();
     let stream_sid = start.stream_sid;
@@ -178,7 +183,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
     let context = crate::voice::context::CallContext {
         channel: "phone".into(),
         external_identity: accepted_call.from,
-        external_conversation_id: call_sid.clone(),
+        external_conversation_id: accepted_call.external_conversation_id.clone(),
         initiation_context: accepted_call.opening_instruction.clone(),
     };
     tracing::info!(%stream_sid, %call_sid, "Twilio stream started");
@@ -252,6 +257,31 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
     state.twilio.remove(&call_sid);
     tracing::info!(%stream_sid, %call_sid, "Twilio media stream closed");
     result
+}
+
+fn restore_outbound_state(state: &AppState, start: &TwilioStartPayload) -> Result<(), VoiceError> {
+    let value = |name: &str| {
+        start
+            .custom_parameters
+            .get(name)
+            .filter(|value| !value.trim().is_empty())
+            .cloned()
+            .ok_or_else(|| VoiceError::Protocol("Twilio stream has no accepted call".into()))
+    };
+    state.twilio.insert(
+        start.call_sid.clone(),
+        crate::routes::twilio::twilio_post::TwilioState {
+            call_sid: start.call_sid.clone(),
+            account_sid: state.twilio_account_sid.to_string(),
+            from: value("external_identity")?,
+            to: state.twilio_from_number.to_string(),
+            call_status: Some("in_progress".into()),
+            opening_instruction: Some(value("opening_instruction")?),
+            action_id: Some(value("action_id")?),
+            external_conversation_id: value("external_conversation_id")?,
+        },
+    );
+    Ok(())
 }
 
 fn validate_start(
@@ -337,6 +367,7 @@ mod tests {
         let start = TwilioStartPayload {
             stream_sid: "MZ123".into(),
             call_sid: "CA123".into(),
+            custom_parameters: HashMap::new(),
         };
         assert!(validate_start(&calls, &start).is_err());
 
@@ -350,6 +381,7 @@ mod tests {
                 call_status: None,
                 opening_instruction: None,
                 action_id: None,
+                external_conversation_id: "CA123".into(),
             },
         );
         assert!(validate_start(&calls, &start).is_ok());

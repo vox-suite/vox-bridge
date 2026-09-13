@@ -13,17 +13,14 @@ use uuid::Uuid;
 pub struct OutboundCallPayload {
     pub action_id: Uuid,
     pub identity: ChannelIdentityPayload,
-    #[serde(rename = "reason")]
-    pub _reason: String,
+    pub reason: String,
     pub opening_instruction: String,
-    #[serde(rename = "conversation_id")]
-    pub _conversation_id: Uuid,
+    pub conversation_id: Uuid,
 }
 
 #[derive(Deserialize)]
 pub struct ChannelIdentityPayload {
-    #[serde(rename = "channel")]
-    pub _channel: String,
+    pub channel: String,
     pub external_id: String,
 }
 
@@ -48,6 +45,13 @@ pub async fn handle_outbound_call(
 
     if !auth_valid {
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    }
+    if payload.identity.channel != "phone"
+        || payload.identity.external_id.trim().is_empty()
+        || payload.reason.trim().is_empty()
+        || payload.opening_instruction.trim().is_empty()
+    {
+        return (StatusCode::BAD_REQUEST, "Invalid outbound call request").into_response();
     }
 
     let action_str = payload.action_id.to_string();
@@ -76,6 +80,8 @@ pub async fn handle_outbound_call(
     match telephony
         .initiate_call(
             &payload.identity.external_id,
+            payload.action_id,
+            payload.conversation_id,
             Some(&payload.opening_instruction),
         )
         .await
@@ -91,6 +97,7 @@ pub async fn handle_outbound_call(
                     call_status: Some("in_progress".into()),
                     opening_instruction: Some(payload.opening_instruction),
                     action_id: Some(action_str),
+                    external_conversation_id: payload.conversation_id.to_string(),
                 },
             );
 

@@ -1,6 +1,7 @@
 pub mod twilio_client;
 
 use async_trait::async_trait;
+use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TelephonyError {
@@ -15,6 +16,8 @@ pub trait TelephonyClient: Send + Sync {
     async fn initiate_call(
         &self,
         to: &str,
+        action_id: Uuid,
+        conversation_id: Uuid,
         opening_instruction: Option<&str>,
     ) -> Result<String, TelephonyError>;
 }

@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 use std::time::Duration;
+use uuid::Uuid;
 
 pub struct TwilioApiClient {
     client: Client,
@@ -43,21 +44,33 @@ impl TelephonyClient for TwilioApiClient {
     async fn initiate_call(
         &self,
         to: &str,
-        _opening_instruction: Option<&str>,
+        action_id: Uuid,
+        conversation_id: Uuid,
+        opening_instruction: Option<&str>,
     ) -> Result<String, TelephonyError> {
         let endpoint = format!(
             "https://api.twilio.com/2010-04-01/Accounts/{}/Calls.json",
             self.account_sid
         );
+        let opening: String = opening_instruction
+            .unwrap_or("Hello from Vox")
+            .chars()
+            .take(300)
+            .collect();
         let twiml = format!(
-            "<Response><Connect><Stream url=\"{}\" /></Connect></Response>",
-            self.stream_url
+            "<Response><Connect><Stream url=\"{}\"><Parameter name=\"action_id\" value=\"{}\"/><Parameter name=\"external_identity\" value=\"{}\"/><Parameter name=\"external_conversation_id\" value=\"{}\"/><Parameter name=\"opening_instruction\" value=\"{}\"/></Stream></Connect></Response>",
+            xml_escape(&self.stream_url),
+            action_id,
+            xml_escape(to),
+            conversation_id,
+            xml_escape(&opening),
         );
+        let status_callback = format!("{}?action_id={action_id}", self.status_callback_url);
         let params = [
             ("To", to),
             ("From", &self.from_number),
             ("Twiml", &twiml),
-            ("StatusCallback", &self.status_callback_url),
+            ("StatusCallback", &status_callback),
             ("StatusCallbackMethod", "POST"),
         ];
 
@@ -79,4 +92,13 @@ impl TelephonyClient for TwilioApiClient {
         let body: TwilioCallResponse = response.json().await?;
         Ok(body.sid)
     }
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
