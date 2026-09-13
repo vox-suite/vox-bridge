@@ -102,3 +102,13 @@ fn xml_escape(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::xml_escape;
+
+    #[test]
+    fn escapes_custom_twiml_values() {
+        assert_eq!(xml_escape("A&B <\"C\">"), "A&amp;B &lt;&quot;C&quot;&gt;");
+    }
+}

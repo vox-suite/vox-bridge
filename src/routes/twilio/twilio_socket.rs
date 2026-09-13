@@ -324,6 +324,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_outbound_stream_context() {
+        let message = parse_inbound(
+            r#"{"event":"start","start":{"streamSid":"MZ123","callSid":"CA123","customParameters":{"action_id":"action-1","external_conversation_id":"conversation-1"}}}"#,
+        )
+        .unwrap();
+        let InboundStreamMessage::Start { start } = message else {
+            panic!("expected start message");
+        };
+        assert_eq!(start.custom_parameters["action_id"], "action-1");
+        assert_eq!(
+            start.custom_parameters["external_conversation_id"],
+            "conversation-1"
+        );
+    }
+
+    #[test]
     fn serializes_media_mark_and_clear_commands() {
         assert_eq!(
             serialize_command(
