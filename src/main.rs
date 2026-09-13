@@ -40,6 +40,8 @@ async fn main() {
         Arc::new(DashMap::new());
     let voice_config = crate::voice::config::VoiceConfig::from_env()
         .expect("voice provider configuration is invalid");
+    let service_token = voice_config.secrets.core_service_token.clone();
+    let core_url = voice_config.secrets.core_url.clone();
     let voice = Arc::new(
         crate::voice::registry::VoiceRuntime::from_config(voice_config)
             .expect("voice provider runtime initialization failed"),
@@ -49,9 +51,6 @@ async fn main() {
     let twilio_auth_token =
         std::env::var("TWILIO_AUTH_TOKEN").expect("TWILIO_AUTH_TOKEN is missing");
     let twilio_from_number = std::env::var("TWILIO_FROM_NUMBER").unwrap_or_default();
-    let service_token = std::env::var("VOX_CORE_SERVICE_TOKEN").unwrap_or_default();
-    let core_url =
-        std::env::var("VOX_CORE_URL").unwrap_or_else(|_| "http://core-api:3001".to_string());
 
     let telephony: Option<Arc<dyn crate::telephony::TelephonyClient>> =
         if !twilio_account_sid.is_empty() && !twilio_from_number.is_empty() {

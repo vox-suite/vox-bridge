@@ -81,7 +81,7 @@ impl VoiceConfig {
         require_provider("TTS", &tts_provider, "sarvam")?;
 
         let assemblyai_api_key = required(&get, "ASSEMBLYAI_API_KEY")?;
-        let core_url = required(&get, "VOX_CORE_URL")?;
+        let core_url = value_or(&get, "VOX_CORE_URL", "http://127.0.0.1:3001");
         let core_service_token = required(&get, "VOX_CORE_SERVICE_TOKEN")?;
         let sarvam_api_key = required(&get, "SARVAM_API_KEY")?;
         let tts_model = value_or(&get, "SARVAM_TTS_MODEL", "bulbul:v3");
@@ -206,6 +206,16 @@ mod tests {
     }
 
     #[test]
+    fn defaults_core_url_for_native_deployment() {
+        let mut values = valid_values();
+        values.remove("VOX_CORE_URL");
+
+        let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
+
+        assert_eq!(config.secrets.core_url, "http://127.0.0.1:3001");
+    }
+
+    #[test]
     fn rejects_unsupported_providers() {
         for (key, value) in [
             ("VOX_STT_PROVIDER", "deepgram"),
@@ -227,7 +237,6 @@ mod tests {
     fn rejects_missing_provider_credentials() {
         for key in [
             "ASSEMBLYAI_API_KEY",
-            "VOX_CORE_URL",
             "VOX_CORE_SERVICE_TOKEN",
             "SARVAM_API_KEY",
         ] {
