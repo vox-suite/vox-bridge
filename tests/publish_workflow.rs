@@ -6,6 +6,8 @@ fn publishes_tested_arm64_image_and_hands_deployment_to_orchestrator() {
         .expect("Bridge publication workflow must exist");
     let legacy = fs::read_to_string(".github/workflows/deploy.yml")
         .expect("legacy recovery workflow must remain available");
+    let bootstrap = fs::read_to_string(".github/workflows/bootstrap-deploy-access.yml")
+        .expect("deployment access bootstrap workflow must exist");
 
     for required in [
         "branches: [main]",
@@ -33,6 +35,15 @@ fn publishes_tested_arm64_image_and_hands_deployment_to_orchestrator() {
 
     assert!(legacy.contains("workflow_dispatch:"));
     assert!(!legacy.contains("branches: [main]"));
+    for required in [
+        "workflow_dispatch:",
+        "VOX_DEPLOY_PUBLIC_KEY",
+        "authorized_keys",
+        "SSH_PRIVATE_KEY",
+        "contents: read",
+    ] {
+        assert!(bootstrap.contains(required));
+    }
 
     let test = workflow.find("cargo test --locked").unwrap();
     let lint = workflow.find("cargo clippy --locked").unwrap();
