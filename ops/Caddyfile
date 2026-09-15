@@ -1,3 +1,7 @@
 api.voxagent.in {
+	handle /v1/admin/redis* {
+		reverse_proxy 127.0.0.1:3001
+	}
+
 	reverse_proxy 127.0.0.1:3000
 }

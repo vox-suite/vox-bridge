@@ -28,7 +28,6 @@ The default provider profile can be stated explicitly:
 ```dotenv
 VOX_STT_PROVIDER=assemblyai
 ASSEMBLYAI_SPEECH_MODEL=universal-3-5-pro
-VOX_AGENT_PROVIDER=vox-core
 VOX_TTS_PROVIDER=sarvam
 SARVAM_TTS_MODEL=bulbul:v3
 SARVAM_LANGUAGE_CODE=en-IN

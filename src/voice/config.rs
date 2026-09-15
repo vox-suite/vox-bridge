@@ -51,7 +51,6 @@ impl VoiceConfig {
     pub fn from_env() -> Result<Self, VoiceError> {
         let values: HashMap<String, String> = [
             "VOX_STT_PROVIDER",
-            "VOX_AGENT_PROVIDER",
             "VOX_TTS_PROVIDER",
             "ASSEMBLYAI_API_KEY",
             "ASSEMBLYAI_SPEECH_MODEL",
@@ -74,10 +73,8 @@ impl VoiceConfig {
         F: Fn(&str) -> Option<String>,
     {
         let stt_provider = value_or(&get, "VOX_STT_PROVIDER", "assemblyai");
-        let agent_provider = value_or(&get, "VOX_AGENT_PROVIDER", "vox-core");
         let tts_provider = value_or(&get, "VOX_TTS_PROVIDER", "sarvam");
         require_provider("STT", &stt_provider, "assemblyai")?;
-        require_provider("agent", &agent_provider, "vox-core")?;
         require_provider("TTS", &tts_provider, "sarvam")?;
 
         let assemblyai_api_key = required(&get, "ASSEMBLYAI_API_KEY")?;
@@ -107,7 +104,7 @@ impl VoiceConfig {
                     model: value_or(&get, "ASSEMBLYAI_SPEECH_MODEL", "universal-3-5-pro"),
                 },
                 agent: ProviderSelection {
-                    provider: agent_provider,
+                    provider: "vox-core".into(),
                     model: "default".into(),
                 },
                 tts: TtsSelection {
@@ -219,7 +216,6 @@ mod tests {
     fn rejects_unsupported_providers() {
         for (key, value) in [
             ("VOX_STT_PROVIDER", "deepgram"),
-            ("VOX_AGENT_PROVIDER", "openai"),
             ("VOX_TTS_PROVIDER", "elevenlabs"),
         ] {
             let mut values = valid_values();
