@@ -35,7 +35,20 @@ pub struct Changes {
 }
 
 #[derive(Deserialize)]
+pub struct Contact {
+    profile: Option<Profile>,
+    #[allow(dead_code)]
+    wa_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct Profile {
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct Value {
+    contacts: Option<Vec<Contact>>,
     messages: Option<Vec<Messages>>,
 }
 
@@ -101,6 +114,15 @@ pub async fn wa_receive(
             for entry in p.entry {
                 for change in entry.changes.into_iter().flatten() {
                     let Some(value) = change.value else { continue };
+
+                    // Extract user profile display name from Meta contacts if available
+                    let profile_name = value
+                        .contacts
+                        .as_ref()
+                        .and_then(|c| c.first())
+                        .and_then(|c| c.profile.as_ref())
+                        .and_then(|p| p.name.clone());
+
                     for message in value.messages.into_iter().flatten() {
                         if message.kind.as_deref() == Some("text") {
                             let Some(text) = message.text else { continue };
@@ -115,7 +137,7 @@ pub async fn wa_receive(
                                 channel: "whatsapp".into(),
                                 external_identity: from.clone(),
                                 external_conversation_id: format!("whatsapp:{from}"),
-                                initiation_context: None,
+                                initiation_context: profile_name.as_ref().map(|n| format!("whatsapp_name:{n}")),
                             };
                             if let Ok(reply) = providers.agent.respond(&context, &body).await {
                                 let _ = send_message(&reply, from.as_str()).await;
@@ -138,7 +160,7 @@ pub async fn send_message(msg: &str, receiver_number: &str) -> Result<(), reqwes
         .post(&url)
         .bearer_auth(&token)
         .json(&serde_json::json!({
-        "messaging_product": "whatsapp",
+            "messaging_product": "whatsapp",
             "to": receiver_number,
             "type": "text",
             "text": {
