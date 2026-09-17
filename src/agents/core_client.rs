@@ -99,6 +99,7 @@ impl AgentProvider for CoreAgentClient {
             initiation_context: context.initiation_context.as_deref(),
         };
 
+        let start_time = std::time::Instant::now();
         let send_result = self
             .client
             .post(&stream_endpoint)
@@ -110,10 +111,20 @@ impl AgentProvider for CoreAgentClient {
 
         match send_result {
             Ok(response) if response.status().is_success() => {
+                tracing::debug!(
+                    endpoint = %stream_endpoint,
+                    connect_time_ms = start_time.elapsed().as_millis(),
+                    "CoreAgentClient: Stream connection established"
+                );
                 let stream = response.bytes_stream();
                 Ok(Box::pin(parse_sse_stream(stream)))
             }
             _ => {
+                tracing::warn!(
+                    endpoint = %stream_endpoint,
+                    elapsed_ms = start_time.elapsed().as_millis(),
+                    "CoreAgentClient: Stream unavailable, falling back to unary respond"
+                );
                 // Fallback to standard unary endpoint if streaming is unsupported by core
                 let text = self.respond(context, transcript).await?;
                 Ok(Box::pin(stream::once(async move { Ok(text) })))

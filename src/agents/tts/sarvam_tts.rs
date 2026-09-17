@@ -72,6 +72,7 @@ impl TtsProvider for SarvamTts {
             "{}/text-to-speech/stream",
             self.endpoint.trim_end_matches('/')
         );
+        let tts_http_start = std::time::Instant::now();
         let response = tokio::time::timeout(
             Duration::from_secs(15),
             self.http
@@ -92,6 +93,11 @@ impl TtsProvider for SarvamTts {
             tracing::error!(status = %status, error_body = %body, "Sarvam TTS API returned error");
             return Err(provider_error("request failed"));
         }
+        tracing::debug!(
+            char_count = text.len(),
+            http_latency_ms = tts_http_start.elapsed().as_millis(),
+            "Sarvam TTS HTTP response received"
+        );
         let stream = response
             .bytes_stream()
             .map(|chunk| chunk.map_err(|_| provider_error("audio stream failed")));

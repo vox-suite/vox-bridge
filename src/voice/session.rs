@@ -21,6 +21,13 @@ pub enum CallCommand {
     Clear,
 }
 
+#[derive(Debug, Clone)]
+pub struct TurnTiming {
+    pub speech_started_at: Option<std::time::Instant>,
+    pub last_audio_at: Option<std::time::Instant>,
+    pub transcript_received_at: std::time::Instant,
+}
+
 enum SessionSignal {
     Stt(SttEvent),
     Stop,
@@ -38,10 +45,15 @@ pub async fn run_voice_session(
     let (signal_tx, mut signal_rx) = mpsc::channel(32);
     let input_stt = stt.clone();
     let input_signal = signal_tx.clone();
+
+    let last_audio_at = Arc::new(std::sync::Mutex::new(None));
+    let input_last_audio = last_audio_at.clone();
+
     let input_task = tokio::spawn(async move {
         while let Some(event) = input.recv().await {
             match event {
                 CallEvent::Audio(audio) => {
+                    *input_last_audio.lock().unwrap() = Some(std::time::Instant::now());
                     if let Err(error) = input_stt.send_audio(audio).await {
                         let _ = input_signal.send(SessionSignal::Failure(error)).await;
                         return;
@@ -78,7 +90,8 @@ pub async fn run_voice_session(
     });
     let mut active_response: Option<JoinHandle<()>> = None;
     let mut response_number = 0_u64;
-    let mut pending_transcripts = VecDeque::new();
+    let mut pending_transcripts: VecDeque<(String, TurnTiming)> = VecDeque::new();
+    let mut speech_started_at: Option<std::time::Instant> = None;
     let mut failure = None;
 
     if let Some(ref opening) = context.initiation_context {
@@ -87,6 +100,7 @@ pub async fn run_voice_session(
             response_number,
             context.clone(),
             opening.clone(),
+            None,
             providers.agent.clone(),
             providers.tts.clone(),
             output.clone(),
@@ -97,6 +111,7 @@ pub async fn run_voice_session(
     while let Some(signal) = signal_rx.recv().await {
         match signal {
             SessionSignal::Stt(SttEvent::SpeechStarted) => {
+                speech_started_at = Some(std::time::Instant::now());
                 if let Some(task) = active_response.take() {
                     task.abort();
                     output
@@ -104,12 +119,13 @@ pub async fn run_voice_session(
                         .await
                         .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
                 }
-                if let Some(transcript) = pending_transcripts.pop_front() {
+                if let Some((transcript, timing)) = pending_transcripts.pop_front() {
                     response_number += 1;
                     active_response = Some(spawn_response(
                         response_number,
                         context.clone(),
                         transcript,
+                        Some(timing),
                         providers.agent.clone(),
                         providers.tts.clone(),
                         output.clone(),
@@ -118,14 +134,23 @@ pub async fn run_voice_session(
                 }
             }
             SessionSignal::Stt(SttEvent::FinalTranscript(transcript)) => {
+                let now = std::time::Instant::now();
+                let last_audio = last_audio_at.lock().unwrap().take();
+                let timing = TurnTiming {
+                    speech_started_at: speech_started_at.take(),
+                    last_audio_at: last_audio,
+                    transcript_received_at: now,
+                };
+
                 if active_response.is_some() {
-                    pending_transcripts.push_back(transcript);
+                    pending_transcripts.push_back((transcript, timing));
                 } else {
                     response_number += 1;
                     active_response = Some(spawn_response(
                         response_number,
                         context.clone(),
                         transcript,
+                        Some(timing),
                         providers.agent.clone(),
                         providers.tts.clone(),
                         output.clone(),
@@ -136,12 +161,13 @@ pub async fn run_voice_session(
             SessionSignal::ResponseFinished(number) => {
                 if number == response_number {
                     active_response.take();
-                    if let Some(transcript) = pending_transcripts.pop_front() {
+                    if let Some((transcript, timing)) = pending_transcripts.pop_front() {
                         response_number += 1;
                         active_response = Some(spawn_response(
                             response_number,
                             context.clone(),
                             transcript,
+                            Some(timing),
                             providers.agent.clone(),
                             providers.tts.clone(),
                             output.clone(),
@@ -176,13 +202,14 @@ fn spawn_response(
     number: u64,
     context: CallContext,
     transcript: String,
+    timing: Option<TurnTiming>,
     agent: Arc<dyn crate::voice::provider::AgentProvider>,
     tts: Arc<dyn crate::voice::provider::TtsProvider>,
     output: mpsc::Sender<CallCommand>,
     signal: mpsc::Sender<SessionSignal>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let result = stream_response(number, &context, &transcript, agent, tts, output).await;
+        let result = stream_response(number, &context, &transcript, timing, agent, tts, output).await;
         if let Err(error) = result {
             tracing::warn!(provider_error = %error, "voice response failed");
         }
@@ -194,58 +221,259 @@ async fn stream_response(
     number: u64,
     context: &CallContext,
     transcript: &str,
+    timing: Option<TurnTiming>,
     agent: Arc<dyn crate::voice::provider::AgentProvider>,
     tts: Arc<dyn crate::voice::provider::TtsProvider>,
     output: mpsc::Sender<CallCommand>,
 ) -> Result<(), VoiceError> {
+    let turn_started_at = std::time::Instant::now();
+    let llm_request_start = std::time::Instant::now();
+
+    tracing::info!(
+        turn = number,
+        conversation_id = %context.external_conversation_id,
+        prompt = %transcript,
+        "Voice pipeline: processing turn"
+    );
+
     let mut text_stream =
         tokio::time::timeout(Duration::from_secs(30), agent.respond_stream(context, transcript))
             .await
             .map_err(|_| VoiceError::Timeout("agent response"))??;
 
     let mut chunker = crate::voice::chunker::SentenceChunker::new();
+    let mut first_token_at: Option<std::time::Instant> = None;
+    let mut first_sentence_at: Option<std::time::Instant> = None;
+    let mut first_sentence_text: Option<String> = None;
+    let mut first_audio_sent_at: Option<std::time::Instant> = None;
+    let mut first_tts_ttfb_ms: Option<u128> = None;
+    let mut full_response = String::new();
+    let mut sentence_count = 0usize;
 
     while let Some(chunk_result) = tokio::time::timeout(Duration::from_secs(30), text_stream.next())
         .await
         .map_err(|_| VoiceError::Timeout("agent stream"))?
     {
         let chunk = chunk_result?;
+        if first_token_at.is_none() && !chunk.trim().is_empty() {
+            first_token_at = Some(std::time::Instant::now());
+        }
+        full_response.push_str(&chunk);
+
         let sentences = chunker.push(&chunk);
         for sentence in sentences {
-            play_sentence(&sentence, tts.as_ref(), &output).await?;
+            let trimmed = sentence.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            sentence_count += 1;
+            if sentence_count == 1 {
+                first_sentence_at = Some(std::time::Instant::now());
+                first_sentence_text = Some(trimmed.to_string());
+            }
+            let ttfb = play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
+            if sentence_count == 1 {
+                first_tts_ttfb_ms = Some(ttfb);
+            }
         }
     }
 
     if let Some(remaining) = chunker.flush() {
-        play_sentence(&remaining, tts.as_ref(), &output).await?;
+        let trimmed = remaining.trim();
+        if !trimmed.is_empty() {
+            sentence_count += 1;
+            if sentence_count == 1 {
+                first_sentence_at = Some(std::time::Instant::now());
+                first_sentence_text = Some(trimmed.to_string());
+            }
+            let ttfb = play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
+            if sentence_count == 1 {
+                first_tts_ttfb_ms = Some(ttfb);
+            }
+        }
     }
 
     output
         .send(CallCommand::Mark(format!("response-{number}")))
         .await
-        .map_err(|_| VoiceError::Protocol("call output closed".into()))
+        .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+
+    let all_audio_sent_at = std::time::Instant::now();
+
+    log_turn_latency(
+        number,
+        context,
+        transcript,
+        &full_response,
+        first_sentence_text.as_deref(),
+        timing,
+        turn_started_at,
+        llm_request_start,
+        first_token_at,
+        first_sentence_at,
+        first_tts_ttfb_ms,
+        first_audio_sent_at,
+        all_audio_sent_at,
+    );
+
+    Ok(())
 }
 
 async fn play_sentence(
     sentence: &str,
     tts: &dyn crate::voice::provider::TtsProvider,
     output: &mpsc::Sender<CallCommand>,
-) -> Result<(), VoiceError> {
+    first_audio_tracker: &mut Option<std::time::Instant>,
+) -> Result<u128, VoiceError> {
     let text = sentence.trim();
     if text.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
+    let tts_start = std::time::Instant::now();
     let mut audio = tts.synthesize(text).await?;
+    let mut ttfb_ms = 0;
+    let mut is_first_chunk = true;
+
     while let Some(chunk) = tokio::time::timeout(Duration::from_secs(10), audio.next())
         .await
         .map_err(|_| VoiceError::Timeout("TTS audio"))?
     {
+        let chunk_bytes = chunk?;
         output
-            .send(CallCommand::Media(chunk?))
+            .send(CallCommand::Media(chunk_bytes))
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+
+        let now = std::time::Instant::now();
+        if is_first_chunk {
+            ttfb_ms = now.duration_since(tts_start).as_millis();
+            if first_audio_tracker.is_none() {
+                *first_audio_tracker = Some(now);
+            }
+            is_first_chunk = false;
+        }
     }
-    Ok(())
+    Ok(ttfb_ms)
+}
+
+fn log_turn_latency(
+    number: u64,
+    context: &CallContext,
+    prompt: &str,
+    full_response: &str,
+    first_sentence: Option<&str>,
+    timing: Option<TurnTiming>,
+    turn_started_at: std::time::Instant,
+    llm_request_start: std::time::Instant,
+    first_token_at: Option<std::time::Instant>,
+    first_sentence_at: Option<std::time::Instant>,
+    first_tts_ttfb_ms: Option<u128>,
+    first_audio_sent_at: Option<std::time::Instant>,
+    all_audio_sent_at: std::time::Instant,
+) {
+    let transcript_rx_at = timing
+        .as_ref()
+        .map(|t| t.transcript_received_at)
+        .unwrap_or(turn_started_at);
+
+    let stt_speech_duration_ms = timing.as_ref().and_then(|t| {
+        t.speech_started_at
+            .map(|s| t.transcript_received_at.duration_since(s).as_millis())
+    });
+
+    let stt_endpointing_ms = timing.as_ref().and_then(|t| {
+        t.last_audio_at
+            .map(|a| t.transcript_received_at.duration_since(a).as_millis())
+    });
+
+    let queue_wait_ms = turn_started_at
+        .duration_since(transcript_rx_at)
+        .as_millis();
+
+    let llm_ttft_ms =
+        first_token_at.map(|ft| ft.duration_since(llm_request_start).as_millis());
+    let llm_ttfs_ms =
+        first_sentence_at.map(|fs| fs.duration_since(llm_request_start).as_millis());
+    let tts_ttfb_ms = first_tts_ttfb_ms;
+
+    // Time from transcript received to first audio dispatched to Twilio (pipeline latency)
+    let time_to_first_audio_ms = first_audio_sent_at
+        .map(|fa| fa.duration_since(transcript_rx_at).as_millis());
+
+    // Time from caller stopped speaking to first audio dispatched to Twilio (user perceived delay)
+    let user_perceived_delay_ms = timing.as_ref().and_then(|t| {
+        t.last_audio_at
+            .and_then(|la| first_audio_sent_at.map(|fa| fa.duration_since(la).as_millis()))
+    });
+
+    let total_turn_duration_ms =
+        all_audio_sent_at.duration_since(transcript_rx_at).as_millis();
+
+    // 1. Structured trace log for monitoring and metrics aggregation
+    tracing::info!(
+        turn = number,
+        conversation_id = %context.external_conversation_id,
+        channel = %context.channel,
+        prompt = %prompt,
+        first_sentence = first_sentence.unwrap_or(""),
+        time_to_first_audio_ms = ?time_to_first_audio_ms,
+        user_perceived_delay_ms = ?user_perceived_delay_ms,
+        stt_speech_duration_ms = ?stt_speech_duration_ms,
+        stt_endpointing_ms = ?stt_endpointing_ms,
+        queue_wait_ms,
+        llm_ttft_ms = ?llm_ttft_ms,
+        llm_ttfs_ms = ?llm_ttfs_ms,
+        tts_ttfb_ms = ?tts_ttfb_ms,
+        total_turn_duration_ms,
+        "VOICE_PIPELINE_METRICS"
+    );
+
+    // 2. High-visibility summary card for prompt benchmark reports
+    let stt_speech_str = stt_speech_duration_ms
+        .map(|ms| format!("{ms} ms"))
+        .unwrap_or_else(|| "N/A".into());
+    let stt_endpoint_str = stt_endpointing_ms
+        .map(|ms| format!("{ms} ms"))
+        .unwrap_or_else(|| "N/A".into());
+    let llm_ttft_str = llm_ttft_ms
+        .map(|ms| format!("{ms} ms"))
+        .unwrap_or_else(|| "N/A".into());
+    let llm_ttfs_str = llm_ttfs_ms
+        .map(|ms| format!("{ms} ms"))
+        .unwrap_or_else(|| "N/A".into());
+    let tts_ttfb_str = tts_ttfb_ms
+        .map(|ms| format!("{ms} ms"))
+        .unwrap_or_else(|| "N/A".into());
+    let ttfa_str = time_to_first_audio_ms
+        .map(|ms| format!("{ms} ms"))
+        .unwrap_or_else(|| "N/A".into());
+    let user_delay_str = user_perceived_delay_ms
+        .map(|ms| format!("{ms} ms"))
+        .unwrap_or_else(|| "N/A".into());
+
+    tracing::info!(
+        "\n======================= [VOICE PIPELINE LATENCY REPORT] =======================\n\
+         Turn #{number} | Call: {conv_id}\n\
+         Prompt (User Question):    \"{prompt}\"\n\
+         First Sentence (Response): \"{first_sentence_display}\"\n\
+         Full Response Text:        \"{full_resp_display}\"\n\
+         -------------------------------------------------------------------------------\n\
+         Pipeline Latency Breakdown:\n\
+           • STT Speech Active:            {stt_speech_str}\n\
+           • STT Endpointing (Silence):    {stt_endpoint_str}\n\
+           • Queue Delay:                  {queue_wait_ms} ms\n\
+           • LLM Time to 1st Token (TTFT): {llm_ttft_str}\n\
+           • LLM Time to 1st Sentence:     {llm_ttfs_str}\n\
+           • TTS Time to 1st Audio (TTFB): {tts_ttfb_str}\n\
+         -------------------------------------------------------------------------------\n\
+           ★ TIME TO FIRST AUDIO (pipeline processing):   {ttfa_str}\n\
+           ★ TOTAL USER-PERCEIVED DELAY (from speech end): {user_delay_str}\n\
+           • Total Turn Duration (full response audio):    {total_turn_duration_ms} ms\n\
+         ===============================================================================",
+        conv_id = context.external_conversation_id,
+        first_sentence_display = first_sentence.unwrap_or("").trim(),
+        full_resp_display = full_response.trim(),
+    );
 }
 
 async fn stop_task(task: JoinHandle<()>) {

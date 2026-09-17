@@ -127,10 +127,15 @@ fn parse_event(raw: &str) -> Result<Option<SttEvent>, VoiceError> {
         AssemblyEvent::Turn {
             end_of_turn: true,
             transcript,
-        } if !transcript.trim().is_empty() => Ok(Some(SttEvent::FinalTranscript(
-            transcript.trim().to_owned(),
-        ))),
-        AssemblyEvent::SpeechStarted => Ok(Some(SttEvent::SpeechStarted)),
+        } if !transcript.trim().is_empty() => {
+            let text = transcript.trim().to_owned();
+            tracing::info!(transcript = %text, "STT: Final user transcript received");
+            Ok(Some(SttEvent::FinalTranscript(text)))
+        }
+        AssemblyEvent::SpeechStarted => {
+            tracing::info!("STT: User speech started");
+            Ok(Some(SttEvent::SpeechStarted))
+        }
         AssemblyEvent::Error { error_code, error } => Err(VoiceError::Provider {
             provider: "assemblyai",
             message: format!("streaming error {error_code}: {error}"),
