@@ -56,11 +56,17 @@ fn provider_error(message: &str) -> VoiceError {
 #[async_trait]
 impl TtsProvider for SarvamTts {
     async fn synthesize(&self, text: &str) -> Result<AudioStream, VoiceError> {
-        if text.trim().is_empty() {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
             return Err(VoiceError::Protocol("empty TTS input".into()));
         }
+        // Sarvam requires at least one character from allowed languages (alphabetic)
+        if !trimmed.chars().any(|c| c.is_alphabetic()) {
+            tracing::warn!(text = %trimmed, "Skipping Sarvam TTS for text without alphabetic characters");
+            return Ok(Box::pin(futures_util::stream::empty()));
+        }
         let request = SarvamRequest {
-            text,
+            text: trimmed,
             language_code: &self.settings.language_code,
             speaker: &self.settings.speaker,
             model: &self.settings.model,
@@ -214,5 +220,21 @@ mod tests {
 
         assert_eq!(error.to_string(), "sarvam provider error: request failed");
         assert!(!error.to_string().contains("sensitive"));
+    }
+
+    #[tokio::test]
+    async fn skips_text_without_alphabetic_characters() {
+        let provider = SarvamTts::new(
+            reqwest::Client::new(),
+            "sarvam-key".into(),
+            "http://127.0.0.1:9".into(),
+            settings(),
+        );
+
+        let mut stream = provider.synthesize("40.").await.unwrap();
+        assert!(stream.next().await.is_none());
+
+        let mut stream2 = provider.synthesize("---").await.unwrap();
+        assert!(stream2.next().await.is_none());
     }
 }

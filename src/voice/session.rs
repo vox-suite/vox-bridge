@@ -317,8 +317,10 @@ pub fn strip_leading_ack(sentence: &str) -> &str {
     for ack in acks {
         if lower.starts_with(ack) {
             let remainder = sentence[ack.len()..].trim_start();
-            if !remainder.is_empty() {
+            if remainder.chars().any(|c| c.is_alphabetic()) {
                 return remainder;
+            } else {
+                return "";
             }
         }
     }
@@ -406,9 +408,15 @@ async fn stream_response(
                 first_sentence_at = Some(std::time::Instant::now());
                 first_sentence_text = Some(trimmed.to_string());
             }
-            let ttfb = play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
-            if first_tts_ttfb_ms.is_none() {
-                first_tts_ttfb_ms = Some(ttfb);
+            match play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await {
+                Ok(ttfb) => {
+                    if first_tts_ttfb_ms.is_none() {
+                        first_tts_ttfb_ms = Some(ttfb);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, sentence = %trimmed, "TTS synthesis failed for sentence, continuing turn");
+                }
             }
         }
     }
@@ -425,9 +433,15 @@ async fn stream_response(
                     first_sentence_at = Some(std::time::Instant::now());
                     first_sentence_text = Some(trimmed.to_string());
                 }
-                let ttfb = play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
-                if first_tts_ttfb_ms.is_none() {
-                    first_tts_ttfb_ms = Some(ttfb);
+                match play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await {
+                    Ok(ttfb) => {
+                        if first_tts_ttfb_ms.is_none() {
+                            first_tts_ttfb_ms = Some(ttfb);
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, sentence = %trimmed, "TTS synthesis failed for flushed sentence, continuing turn");
+                    }
                 }
             }
         }
@@ -466,7 +480,7 @@ async fn play_sentence(
     first_audio_tracker: &mut Option<std::time::Instant>,
 ) -> Result<u128, VoiceError> {
     let text = sentence.trim();
-    if text.is_empty() {
+    if text.is_empty() || !text.chars().any(|c| c.is_alphabetic()) {
         return Ok(0);
     }
     let tts_start = std::time::Instant::now();

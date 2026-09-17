@@ -20,7 +20,7 @@ impl SentenceChunker {
     pub fn flush(&mut self) -> Option<String> {
         let remaining = self.buffer.trim().to_string();
         self.buffer.clear();
-        if remaining.is_empty() {
+        if remaining.is_empty() || !remaining.chars().any(|c| c.is_alphabetic()) {
             None
         } else {
             Some(remaining)
@@ -32,7 +32,7 @@ impl SentenceChunker {
         while let Some(index) = self.find_sentence_boundary() {
             let sentence = self.buffer[..index].trim().to_string();
             self.buffer = self.buffer[index..].trim_start().to_string();
-            if !sentence.is_empty() {
+            if !sentence.is_empty() && sentence.chars().any(|c| c.is_alphabetic()) {
                 sentences.push(sentence);
             }
         }
@@ -113,6 +113,11 @@ impl SentenceChunker {
                             || bytes[end_idx] == b']')
                     {
                         end_idx += 1;
+                    }
+
+                    let candidate = &self.buffer[..end_idx];
+                    if !candidate.chars().any(|c| c.is_alphabetic()) {
+                        continue;
                     }
 
                     return Some(end_idx);
@@ -212,5 +217,16 @@ mod tests {
                 "and you have a doctor appointment at ten AM."
             ]
         );
+    }
+
+    #[test]
+    fn does_not_emit_or_flush_non_alphabetic_fragments() {
+        let mut chunker = SentenceChunker::new();
+        assert_eq!(chunker.push("40. "), Vec::<String>::new());
+        assert_eq!(chunker.flush(), None);
+
+        let mut chunker2 = SentenceChunker::new();
+        assert_eq!(chunker2.push("--- "), Vec::<String>::new());
+        assert_eq!(chunker2.flush(), None);
     }
 }
