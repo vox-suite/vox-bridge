@@ -6,6 +6,7 @@ use std::{pin::Pin, sync::Arc};
 use thiserror::Error;
 
 pub type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, VoiceError>> + Send>>;
+pub type TextStream = Pin<Box<dyn Stream<Item = Result<String, VoiceError>> + Send>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SttEvent {
@@ -43,6 +44,14 @@ pub trait SttProvider: Send + Sync {
 #[async_trait]
 pub trait AgentProvider: Send + Sync {
     async fn respond(&self, context: &CallContext, transcript: &str) -> Result<String, VoiceError>;
+    async fn respond_stream(
+        &self,
+        context: &CallContext,
+        transcript: &str,
+    ) -> Result<TextStream, VoiceError> {
+        let text = self.respond(context, transcript).await?;
+        Ok(Box::pin(futures_util::stream::once(async move { Ok(text) })))
+    }
     async fn complete(&self, _context: &CallContext) -> Result<(), VoiceError> {
         Ok(())
     }

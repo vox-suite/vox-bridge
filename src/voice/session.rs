@@ -198,11 +198,44 @@ async fn stream_response(
     tts: Arc<dyn crate::voice::provider::TtsProvider>,
     output: mpsc::Sender<CallCommand>,
 ) -> Result<(), VoiceError> {
-    let response =
-        tokio::time::timeout(Duration::from_secs(30), agent.respond(context, transcript))
+    let mut text_stream =
+        tokio::time::timeout(Duration::from_secs(30), agent.respond_stream(context, transcript))
             .await
             .map_err(|_| VoiceError::Timeout("agent response"))??;
-    let mut audio = tts.synthesize(&response).await?;
+
+    let mut chunker = crate::voice::chunker::SentenceChunker::new();
+
+    while let Some(chunk_result) = tokio::time::timeout(Duration::from_secs(30), text_stream.next())
+        .await
+        .map_err(|_| VoiceError::Timeout("agent stream"))?
+    {
+        let chunk = chunk_result?;
+        let sentences = chunker.push(&chunk);
+        for sentence in sentences {
+            play_sentence(&sentence, tts.as_ref(), &output).await?;
+        }
+    }
+
+    if let Some(remaining) = chunker.flush() {
+        play_sentence(&remaining, tts.as_ref(), &output).await?;
+    }
+
+    output
+        .send(CallCommand::Mark(format!("response-{number}")))
+        .await
+        .map_err(|_| VoiceError::Protocol("call output closed".into()))
+}
+
+async fn play_sentence(
+    sentence: &str,
+    tts: &dyn crate::voice::provider::TtsProvider,
+    output: &mpsc::Sender<CallCommand>,
+) -> Result<(), VoiceError> {
+    let text = sentence.trim();
+    if text.is_empty() {
+        return Ok(());
+    }
+    let mut audio = tts.synthesize(text).await?;
     while let Some(chunk) = tokio::time::timeout(Duration::from_secs(10), audio.next())
         .await
         .map_err(|_| VoiceError::Timeout("TTS audio"))?
@@ -212,10 +245,7 @@ async fn stream_response(
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
     }
-    output
-        .send(CallCommand::Mark(format!("response-{number}")))
-        .await
-        .map_err(|_| VoiceError::Protocol("call output closed".into()))
+    Ok(())
 }
 
 async fn stop_task(task: JoinHandle<()>) {
@@ -251,7 +281,7 @@ mod tests {
 
     struct FakeAgent {
         transcripts: Mutex<Vec<String>>,
-        response: String,
+        response: Mutex<String>,
         first_gate: Mutex<Option<Arc<Notify>>>,
     }
 
@@ -299,7 +329,7 @@ mod tests {
             {
                 gate.notified().await;
             }
-            Ok(self.response.clone())
+            Ok(self.response.lock().await.clone())
         }
     }
 
@@ -346,7 +376,7 @@ mod tests {
         });
         let agent = Arc::new(FakeAgent {
             transcripts: Mutex::new(Vec::new()),
-            response: "Hi there".into(),
+            response: Mutex::new("Hi there".into()),
             first_gate: Mutex::new(None),
         });
         let tts = Arc::new(FakeTts {
@@ -532,5 +562,47 @@ mod tests {
         input_tx.send(CallEvent::Stop).await.unwrap();
         session.await.unwrap().unwrap();
         assert!(stt.finished.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn multi_sentence_response_is_synthesized_and_streamed_per_sentence() {
+        let (providers, event_tx, _, agent, tts) = providers();
+        *agent.response.lock().await = "First sentence. Second sentence.".into();
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (output_tx, mut output_rx) = mpsc::channel(16);
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
+
+        event_tx
+            .send(SttEvent::FinalTranscript("hello".into()))
+            .await
+            .unwrap();
+
+        let mut commands = Vec::new();
+        // 2 chunks for first sentence, 2 chunks for second sentence, 1 mark
+        for _ in 0..5 {
+            commands.push(output_rx.recv().await.unwrap());
+        }
+        input_tx.send(CallEvent::Stop).await.unwrap();
+        session.await.unwrap().unwrap();
+
+        assert_eq!(
+            tts.texts.lock().await.as_slice(),
+            &["First sentence.", "Second sentence."]
+        );
+        assert_eq!(
+            commands,
+            vec![
+                CallCommand::Media(Bytes::from_static(&[1, 2])),
+                CallCommand::Media(Bytes::from_static(&[3, 4])),
+                CallCommand::Media(Bytes::from_static(&[1, 2])),
+                CallCommand::Media(Bytes::from_static(&[3, 4])),
+                CallCommand::Mark("response-1".into()),
+            ]
+        );
     }
 }
