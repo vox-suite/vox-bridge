@@ -87,7 +87,7 @@ pub async fn initialize_voice_socket(
             from: params.from,
             to: params.to,
             call_status: params.call_status,
-            opening_instruction: None,
+            opening_instruction: Some("The call just connected. Greet the user.".into()),
             action_id: None,
             external_conversation_id,
         },

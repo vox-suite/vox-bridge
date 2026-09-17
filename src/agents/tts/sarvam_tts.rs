@@ -82,8 +82,14 @@ impl TtsProvider for SarvamTts {
         )
         .await
         .map_err(|_| VoiceError::Timeout("Sarvam response"))?
-        .map_err(|_| provider_error("request failed"))?;
+        .map_err(|err| {
+            tracing::error!(error = %err, "Sarvam request send failed");
+            provider_error("request failed")
+        })?;
         if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            tracing::error!(status = %status, error_body = %body, "Sarvam TTS API returned error");
             return Err(provider_error("request failed"));
         }
         let stream = response
