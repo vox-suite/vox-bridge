@@ -68,6 +68,10 @@ impl VoiceRuntime {
     pub fn from_config(config: VoiceConfig) -> Result<Self, VoiceError> {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
+            .tcp_nodelay(true)
+            .tcp_keepalive(std::time::Duration::from_secs(30))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(10)
             .build()
             .map_err(|_| VoiceError::Configuration("HTTP client creation failed".into()))?;
         let profile = config.profile.clone();

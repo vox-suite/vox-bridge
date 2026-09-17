@@ -38,6 +38,10 @@ impl CoreAgentClient {
     pub fn new(base_url: String, service_token: String) -> Result<Self, VoiceError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
+            .tcp_nodelay(true)
+            .tcp_keepalive(Duration::from_secs(30))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(10)
             .build()
             .map_err(|_| configuration("Core HTTP client creation failed"))?;
         let trimmed = base_url.trim_end_matches('/').to_owned();

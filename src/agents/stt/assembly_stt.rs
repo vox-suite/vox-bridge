@@ -21,14 +21,27 @@ pub struct AssemblyAiStt {
     api_key: String,
     model: String,
     endpoint: String,
+    min_turn_silence: u32,
+    max_turn_silence: u32,
 }
 
 impl AssemblyAiStt {
     pub fn new(api_key: String, model: String) -> Self {
+        let min_turn_silence = std::env::var("ASSEMBLYAI_MIN_TURN_SILENCE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(250);
+        let max_turn_silence = std::env::var("ASSEMBLYAI_MAX_TURN_SILENCE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(500);
+
         Self {
             api_key,
             model,
             endpoint: "wss://streaming.assemblyai.com/v3/ws".into(),
+            min_turn_silence,
+            max_turn_silence,
         }
     }
 
@@ -43,8 +56,8 @@ impl AssemblyAiStt {
             ));
         }
         let url = format!(
-            "{}?speech_model={}&encoding=pcm_mulaw&sample_rate=8000",
-            self.endpoint, self.model
+            "{}?speech_model={}&encoding=pcm_mulaw&sample_rate=8000&mode=min_latency&min_turn_silence={}&max_turn_silence={}&voice_focus=near-field",
+            self.endpoint, self.model, self.min_turn_silence, self.max_turn_silence
         );
         let mut request = url
             .into_client_request()
