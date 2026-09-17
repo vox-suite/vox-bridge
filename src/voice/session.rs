@@ -217,6 +217,114 @@ fn spawn_response(
     })
 }
 
+/// Detects if an incoming transcript is a lookup, search, or multi-step action that benefits
+/// from an immediate fast audio filler / verbal acknowledgment to eliminate telephony dead air.
+pub fn detect_action_filler(transcript: &str) -> Option<&'static str> {
+    let lower = transcript.to_ascii_lowercase();
+    let trimmed = lower.trim();
+
+    // Do not play fillers for greetings, short social pleasantries, or simple confirmations
+    if trimmed.is_empty()
+        || trimmed.starts_with("the call just connected")
+        || trimmed == "hi"
+        || trimmed == "hello"
+        || trimmed == "hey"
+        || trimmed == "nope"
+        || trimmed == "nope."
+        || trimmed == "yes"
+        || trimmed == "yeah"
+        || trimmed == "no"
+        || trimmed == "ok"
+        || trimmed == "okay"
+        || trimmed == "cool"
+        || trimmed == "thanks"
+        || trimmed == "thank you"
+        || trimmed == "cool, thanks"
+        || trimmed == "cool, thanks."
+        || trimmed == "nothing"
+        || trimmed == "nothing. bye"
+        || trimmed == "nothing. bye."
+        || trimmed == "bye"
+        || trimmed == "goodbye"
+        || trimmed.starts_with("my name is")
+        || trimmed.starts_with("i am ")
+        || trimmed.starts_with("i'm ")
+        || trimmed.starts_with("call me ")
+    {
+        return None;
+    }
+
+    // Specific domain fillers
+    if trimmed.contains("stock price") || trimmed.contains("stock") || trimmed.contains("trading at") {
+        return Some("Let me look that up.");
+    }
+    if trimmed.contains("coffee")
+        || trimmed.contains("drive there")
+        || trimmed.contains("how long")
+        || trimmed.contains("route")
+        || trimmed.contains("traffic")
+    {
+        return Some("Checking that for you.");
+    }
+    if trimmed.contains("cricket")
+        || trimmed.contains("search for")
+        || trimmed.contains("search")
+        || trimmed.contains("find")
+    {
+        return Some("Let me check that for you.");
+    }
+
+    let action_keywords = [
+        "look up", "lookup", "check", "weather",
+        "remind", "add a task", "add task", "log a", "create a",
+        "schedule", "calculate", "tell me about",
+    ];
+
+    for kw in action_keywords {
+        if trimmed.contains(kw) {
+            return Some("Let me check that for you.");
+        }
+    }
+
+    if trimmed.split_whitespace().count() >= 6
+        && (trimmed.contains('?')
+            || trimmed.starts_with("what ")
+            || trimmed.starts_with("where ")
+            || trimmed.starts_with("when ")
+            || trimmed.starts_with("who ")
+            || trimmed.starts_with("how "))
+    {
+        return Some("Let me check that for you.");
+    }
+
+    None
+}
+
+/// Strips duplicate leading conversational acknowledgments (e.g. "On it.", "Done.") from
+/// the core LLM response if an immediate filler was already played aloud.
+pub fn strip_leading_ack(sentence: &str) -> &str {
+    let acks = [
+        "on it.", "on it,", "on it!", "on it",
+        "done.", "done,", "done!", "done",
+        "got it.", "got it,", "got it!", "got it",
+        "sure thing.", "sure thing,", "sure thing!",
+        "sure.", "sure,", "sure!",
+        "certainly.", "certainly,",
+        "right away.", "right away,",
+        "one moment.", "one moment,",
+    ];
+    let lower = sentence.to_ascii_lowercase();
+    for ack in acks {
+        if lower.starts_with(ack) {
+            let remainder = sentence[ack.len()..].trim_start();
+            if !remainder.is_empty() {
+                return remainder;
+            }
+        }
+    }
+    sentence
+}
+
 async fn stream_response(
     number: u64,
     context: &CallContext,
@@ -236,11 +344,6 @@ async fn stream_response(
         "Voice pipeline: processing turn"
     );
 
-    let mut text_stream =
-        tokio::time::timeout(Duration::from_secs(30), agent.respond_stream(context, transcript))
-            .await
-            .map_err(|_| VoiceError::Timeout("agent response"))??;
-
     let mut chunker = crate::voice::chunker::SentenceChunker::new();
     let mut first_token_at: Option<std::time::Instant> = None;
     let mut first_sentence_at: Option<std::time::Instant> = None;
@@ -249,6 +352,31 @@ async fn stream_response(
     let mut first_tts_ttfb_ms: Option<u128> = None;
     let mut full_response = String::new();
     let mut sentence_count = 0usize;
+
+    // Fast conversational filler for action/lookup queries to eliminate dead air (<500ms TTFA)
+    let mut filler_played = false;
+    if let Some(filler) = detect_action_filler(transcript) {
+        tracing::info!(
+            turn = number,
+            filler = %filler,
+            "Playing immediate conversational filler for tool / lookup query"
+        );
+        let ttfb = play_sentence(filler, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
+        if first_tts_ttfb_ms.is_none() {
+            first_tts_ttfb_ms = Some(ttfb);
+        }
+        if first_sentence_at.is_none() {
+            first_sentence_at = Some(std::time::Instant::now());
+            first_sentence_text = Some(filler.to_string());
+        }
+        sentence_count += 1;
+        filler_played = true;
+    }
+
+    let mut text_stream =
+        tokio::time::timeout(Duration::from_secs(30), agent.respond_stream(context, transcript))
+            .await
+            .map_err(|_| VoiceError::Timeout("agent response"))??;
 
     while let Some(chunk_result) = tokio::time::timeout(Duration::from_secs(30), text_stream.next())
         .await
@@ -262,33 +390,45 @@ async fn stream_response(
 
         let sentences = chunker.push(&chunk);
         for sentence in sentences {
-            let trimmed = sentence.trim();
+            let mut trimmed = sentence.trim();
             if trimmed.is_empty() {
                 continue;
             }
+            if filler_played {
+                trimmed = strip_leading_ack(trimmed);
+                filler_played = false;
+                if trimmed.is_empty() {
+                    continue;
+                }
+            }
             sentence_count += 1;
-            if sentence_count == 1 {
+            if sentence_count == 1 || first_sentence_at.is_none() {
                 first_sentence_at = Some(std::time::Instant::now());
                 first_sentence_text = Some(trimmed.to_string());
             }
             let ttfb = play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
-            if sentence_count == 1 {
+            if first_tts_ttfb_ms.is_none() {
                 first_tts_ttfb_ms = Some(ttfb);
             }
         }
     }
 
     if let Some(remaining) = chunker.flush() {
-        let trimmed = remaining.trim();
+        let mut trimmed = remaining.trim();
         if !trimmed.is_empty() {
-            sentence_count += 1;
-            if sentence_count == 1 {
-                first_sentence_at = Some(std::time::Instant::now());
-                first_sentence_text = Some(trimmed.to_string());
+            if filler_played {
+                trimmed = strip_leading_ack(trimmed);
             }
-            let ttfb = play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
-            if sentence_count == 1 {
-                first_tts_ttfb_ms = Some(ttfb);
+            if !trimmed.is_empty() {
+                sentence_count += 1;
+                if sentence_count == 1 || first_sentence_at.is_none() {
+                    first_sentence_at = Some(std::time::Instant::now());
+                    first_sentence_text = Some(trimmed.to_string());
+                }
+                let ttfb = play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
+                if first_tts_ttfb_ms.is_none() {
+                    first_tts_ttfb_ms = Some(ttfb);
+                }
             }
         }
     }
@@ -831,6 +971,47 @@ mod tests {
                 CallCommand::Media(Bytes::from_static(&[3, 4])),
                 CallCommand::Mark("response-1".into()),
             ]
+        );
+    }
+
+    #[test]
+    fn test_detect_action_filler() {
+        assert_eq!(
+            detect_action_filler("Search for the date and opponent of India's next cricket match"),
+            Some("Let me check that for you.")
+        );
+        assert_eq!(
+            detect_action_filler("Look up the current stock price of Apple"),
+            Some("Let me look that up.")
+        );
+        assert_eq!(
+            detect_action_filler("Find a special specialty coffee shop in Indiranagar"),
+            Some("Checking that for you.")
+        );
+        assert_eq!(detect_action_filler("The call just connected. Greet the user."), None);
+        assert_eq!(detect_action_filler("Nope."), None);
+        assert_eq!(detect_action_filler("My name is Rahul."), None);
+        assert_eq!(detect_action_filler("Cool, thanks."), None);
+        assert_eq!(detect_action_filler("Nothing. Bye."), None);
+    }
+
+    #[test]
+    fn test_strip_leading_ack() {
+        assert_eq!(
+            strip_leading_ack("On it. India's next match is a Test against the West Indies."),
+            "India's next match is a Test against the West Indies."
+        );
+        assert_eq!(
+            strip_leading_ack("Done. Apple is trading at $337."),
+            "Apple is trading at $337."
+        );
+        assert_eq!(
+            strip_leading_ack("Sure thing! I will set that reminder."),
+            "I will set that reminder."
+        );
+        assert_eq!(
+            strip_leading_ack("Araku Coffee in Indiranagar is a fantastic spot."),
+            "Araku Coffee in Indiranagar is a fantastic spot."
         );
     }
 }
