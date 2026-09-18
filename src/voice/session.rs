@@ -103,6 +103,7 @@ pub async fn run_voice_session(
             None,
             providers.agent.clone(),
             providers.tts.clone(),
+            providers.jev.clone(),
             output.clone(),
             signal_tx.clone(),
         ));
@@ -128,6 +129,7 @@ pub async fn run_voice_session(
                         Some(timing),
                         providers.agent.clone(),
                         providers.tts.clone(),
+                        providers.jev.clone(),
                         output.clone(),
                         signal_tx.clone(),
                     ));
@@ -153,6 +155,7 @@ pub async fn run_voice_session(
                         Some(timing),
                         providers.agent.clone(),
                         providers.tts.clone(),
+                        providers.jev.clone(),
                         output.clone(),
                         signal_tx.clone(),
                     ));
@@ -170,6 +173,7 @@ pub async fn run_voice_session(
                             Some(timing),
                             providers.agent.clone(),
                             providers.tts.clone(),
+                            providers.jev.clone(),
                             output.clone(),
                             signal_tx.clone(),
                         ));
@@ -205,11 +209,12 @@ fn spawn_response(
     timing: Option<TurnTiming>,
     agent: Arc<dyn crate::voice::provider::AgentProvider>,
     tts: Arc<dyn crate::voice::provider::TtsProvider>,
+    jev: Option<Arc<crate::agents::BridgeJevClient>>,
     output: mpsc::Sender<CallCommand>,
     signal: mpsc::Sender<SessionSignal>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let result = stream_response(number, &context, &transcript, timing, agent, tts, output).await;
+        let result = stream_response(number, &context, &transcript, timing, agent, tts, jev.as_deref(), output).await;
         if let Err(error) = result {
             tracing::warn!(provider_error = %error, "voice response failed");
         }
@@ -219,7 +224,10 @@ fn spawn_response(
 
 /// Detects if an incoming transcript is a lookup, search, or multi-step action that benefits
 /// from an immediate fast audio filler / verbal acknowledgment to eliminate telephony dead air.
-pub fn detect_action_filler(transcript: &str) -> Option<&'static str> {
+pub async fn detect_action_filler(
+    transcript: &str,
+    jev: Option<&crate::agents::BridgeJevClient>,
+) -> Option<&'static str> {
     let lower = transcript.to_ascii_lowercase();
     let trimmed = lower.trim();
 
@@ -252,6 +260,33 @@ pub fn detect_action_filler(transcript: &str) -> Option<&'static str> {
         || trimmed.starts_with("call me ")
     {
         return None;
+    }
+
+    // High-accuracy Jev Choice evaluation if available
+    if let Some(client) = jev {
+        let state = serde_json::json!({ "transcript": transcript });
+        if let Ok((choice, confidence)) = client
+            .choice(
+                state,
+                "Select the appropriate immediate spoken acknowledgment for this request.",
+                &[
+                    ("none", Some("Pure conversational question, greeting, acknowledgment, or question answerable without external lookups")),
+                    ("search", Some("General web lookups, current facts, sports scores, stock prices, weather")),
+                    ("navigation", Some("Finding places, cafes, coffee shops, driving time, distance, traffic, or directions")),
+                    ("organizing", Some("Adding tasks, calendar events, saving notes, reminders, or scheduling")),
+                ],
+            )
+            .await
+        {
+            if confidence >= 0.70 {
+                return match choice.as_str() {
+                    "search" => Some("Let me look that up for you."),
+                    "navigation" => Some("Checking that for you."),
+                    "organizing" => Some("I'll take care of that for you."),
+                    _ => None,
+                };
+            }
+        }
     }
 
     // Specific domain fillers
@@ -334,6 +369,7 @@ async fn stream_response(
     timing: Option<TurnTiming>,
     agent: Arc<dyn crate::voice::provider::AgentProvider>,
     tts: Arc<dyn crate::voice::provider::TtsProvider>,
+    jev: Option<&crate::agents::BridgeJevClient>,
     output: mpsc::Sender<CallCommand>,
 ) -> Result<(), VoiceError> {
     let turn_started_at = std::time::Instant::now();
@@ -357,7 +393,7 @@ async fn stream_response(
 
     // Fast conversational filler for action/lookup queries to eliminate dead air (<500ms TTFA)
     let mut filler_played = false;
-    if let Some(filler) = detect_action_filler(transcript) {
+    if let Some(filler) = detect_action_filler(transcript, jev).await {
         tracing::info!(
             turn = number,
             filler = %filler,
@@ -774,6 +810,7 @@ mod tests {
                 }),
                 agent: agent.clone(),
                 tts: tts.clone(),
+                jev: None,
             },
             event_tx,
             stt_session,
@@ -988,25 +1025,25 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_detect_action_filler() {
+    #[tokio::test]
+    async fn test_detect_action_filler() {
         assert_eq!(
-            detect_action_filler("Search for the date and opponent of India's next cricket match"),
+            detect_action_filler("Search for the date and opponent of India's next cricket match", None).await,
             Some("Let me check that for you.")
         );
         assert_eq!(
-            detect_action_filler("Look up the current stock price of Apple"),
+            detect_action_filler("Look up the current stock price of Apple", None).await,
             Some("Let me look that up.")
         );
         assert_eq!(
-            detect_action_filler("Find a special specialty coffee shop in Indiranagar"),
+            detect_action_filler("Find a special specialty coffee shop in Indiranagar", None).await,
             Some("Checking that for you.")
         );
-        assert_eq!(detect_action_filler("The call just connected. Greet the user."), None);
-        assert_eq!(detect_action_filler("Nope."), None);
-        assert_eq!(detect_action_filler("My name is Rahul."), None);
-        assert_eq!(detect_action_filler("Cool, thanks."), None);
-        assert_eq!(detect_action_filler("Nothing. Bye."), None);
+        assert_eq!(detect_action_filler("The call just connected. Greet the user.", None).await, None);
+        assert_eq!(detect_action_filler("Nope.", None).await, None);
+        assert_eq!(detect_action_filler("My name is Rahul.", None).await, None);
+        assert_eq!(detect_action_filler("Cool, thanks.", None).await, None);
+        assert_eq!(detect_action_filler("Nothing. Bye.", None).await, None);
     }
 
     #[test]

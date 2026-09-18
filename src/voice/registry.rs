@@ -29,6 +29,7 @@ pub struct ProviderRegistry {
     stt: HashMap<String, Arc<dyn SttProvider>>,
     agents: HashMap<String, Arc<dyn AgentProvider>>,
     tts: HashMap<String, Arc<dyn TtsProvider>>,
+    jev: Option<Arc<crate::agents::BridgeJevClient>>,
 }
 
 #[derive(Clone)]
@@ -36,6 +37,7 @@ pub struct ProviderSet {
     pub stt: Arc<dyn SttProvider>,
     pub agent: Arc<dyn AgentProvider>,
     pub tts: Arc<dyn TtsProvider>,
+    pub jev: Option<Arc<crate::agents::BridgeJevClient>>,
 }
 
 impl ProviderRegistry {
@@ -55,7 +57,12 @@ impl ProviderRegistry {
             .get(&profile.tts.provider)
             .cloned()
             .ok_or_else(|| unregistered("TTS", &profile.tts.provider))?;
-        Ok(ProviderSet { stt, agent, tts })
+        Ok(ProviderSet {
+            stt,
+            agent,
+            tts,
+            jev: self.jev.clone(),
+        })
     }
 }
 
@@ -94,11 +101,17 @@ impl VoiceRuntime {
                 pace: profile.tts.pace,
             },
         ));
+        let jev: Option<Arc<crate::agents::BridgeJevClient>> = config
+            .secrets
+            .jev_api_key
+            .map(|key| Arc::new(crate::agents::BridgeJevClient::new(key, config.secrets.jev_base_url)));
+
         Ok(Self {
             providers: Arc::new(ProviderRegistry {
                 stt: HashMap::from([(profile.stt.provider.clone(), stt)]),
                 agents: HashMap::from([(profile.agent.provider.clone(), agent)]),
                 tts: HashMap::from([(profile.tts.provider.clone(), tts)]),
+                jev,
             }),
             resolver: Arc::new(StaticVoiceProfileResolver { profile }),
         })

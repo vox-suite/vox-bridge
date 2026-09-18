@@ -39,6 +39,8 @@ pub(crate) struct VoiceSecrets {
     pub core_url: String,
     pub core_service_token: String,
     pub sarvam_api_key: String,
+    pub jev_api_key: Option<String>,
+    pub jev_base_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -120,6 +122,10 @@ impl VoiceConfig {
                 core_url,
                 core_service_token,
                 sarvam_api_key,
+                jev_api_key: get("JEV")
+                    .or_else(|| get("JEV_API_KEY"))
+                    .filter(|v| !v.trim().is_empty()),
+                jev_base_url: get("JEV_BASE_URL").filter(|v| !v.trim().is_empty()),
             },
         })
     }
