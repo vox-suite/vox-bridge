@@ -109,6 +109,18 @@ async fn main() {
 
     println!("Server running on http://0.0.0.0:3000");
 
+    // Warm up the HTTP connection pool to vox-core asynchronously in the background
+    let prewarm_url = core_url.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            let _ = client.get(format!("{prewarm_url}/health/ready")).send().await;
+        }
+    });
+
     axum::serve(listener, app).await.unwrap();
 }
 

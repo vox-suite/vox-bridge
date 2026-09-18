@@ -392,14 +392,32 @@ async fn stream_response(
     let mut sentence_count = 0usize;
 
     // Fast conversational filler for action/lookup queries to eliminate dead air (<500ms TTFA)
+    // Runs filler audio synthesis/playback in parallel with requesting the core LLM stream
     let mut filler_played = false;
-    if let Some(filler) = detect_action_filler(transcript, jev).await {
+    let (filler_result, text_stream_result) = if let Some(filler) = detect_action_filler(transcript, jev).await {
         tracing::info!(
             turn = number,
             filler = %filler,
-            "Playing immediate conversational filler for tool / lookup query"
+            "Playing immediate conversational filler for tool / lookup query concurrently with LLM stream"
         );
-        let ttfb = play_sentence(filler, tts.as_ref(), &output, &mut first_audio_sent_at).await?;
+        let filler_fut = play_sentence(filler, tts.as_ref(), &output, &mut first_audio_sent_at);
+        let stream_fut = tokio::time::timeout(
+            Duration::from_secs(30),
+            agent.respond_stream(context, transcript),
+        );
+        let (f_res, s_res) = tokio::join!(filler_fut, stream_fut);
+        (Some((filler, f_res)), s_res)
+    } else {
+        let s_res = tokio::time::timeout(
+            Duration::from_secs(30),
+            agent.respond_stream(context, transcript),
+        )
+        .await;
+        (None, s_res)
+    };
+
+    if let Some((filler, f_res)) = filler_result {
+        let ttfb = f_res?;
         if first_tts_ttfb_ms.is_none() {
             first_tts_ttfb_ms = Some(ttfb);
         }
@@ -411,10 +429,8 @@ async fn stream_response(
         filler_played = true;
     }
 
-    let mut text_stream =
-        tokio::time::timeout(Duration::from_secs(30), agent.respond_stream(context, transcript))
-            .await
-            .map_err(|_| VoiceError::Timeout("agent response"))??;
+    let mut text_stream = text_stream_result
+        .map_err(|_| VoiceError::Timeout("agent response"))??;
 
     while let Some(chunk_result) = tokio::time::timeout(Duration::from_secs(30), text_stream.next())
         .await
