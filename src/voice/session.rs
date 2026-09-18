@@ -30,6 +30,7 @@ pub struct TurnTiming {
 
 enum SessionSignal {
     Stt(SttEvent),
+    SpeechDetected,
     Stop,
     Failure(VoiceError),
     ResponseFinished(u64),
@@ -49,11 +50,15 @@ pub async fn run_voice_session(
     let last_audio_at = Arc::new(std::sync::Mutex::new(None));
     let input_last_audio = last_audio_at.clone();
 
+    let mut vad = crate::voice::vad::VoiceActivityDetector::new();
     let input_task = tokio::spawn(async move {
         while let Some(event) = input.recv().await {
             match event {
                 CallEvent::Audio(audio) => {
                     *input_last_audio.lock().unwrap() = Some(std::time::Instant::now());
+                    if vad.process_frame(&audio) == crate::voice::vad::VadEvent::SpeechStarted {
+                        let _ = input_signal.send(SessionSignal::SpeechDetected).await;
+                    }
                     if let Err(error) = input_stt.send_audio(audio).await {
                         let _ = input_signal.send(SessionSignal::Failure(error)).await;
                         return;
@@ -111,8 +116,39 @@ pub async fn run_voice_session(
 
     while let Some(signal) = signal_rx.recv().await {
         match signal {
+            SessionSignal::SpeechDetected => {
+                if active_response.is_some() {
+                    tracing::info!("Local VAD: Voice detected, executing instant barge-in interruption");
+                    if speech_started_at.is_none() {
+                        speech_started_at = Some(std::time::Instant::now());
+                    }
+                    if let Some(task) = active_response.take() {
+                        task.abort();
+                        output
+                            .send(CallCommand::Clear)
+                            .await
+                            .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+                    }
+                    if let Some((transcript, timing)) = pending_transcripts.pop_front() {
+                        response_number += 1;
+                        active_response = Some(spawn_response(
+                            response_number,
+                            context.clone(),
+                            transcript,
+                            Some(timing),
+                            providers.agent.clone(),
+                            providers.tts.clone(),
+                            providers.jev.clone(),
+                            output.clone(),
+                            signal_tx.clone(),
+                        ));
+                    }
+                }
+            }
             SessionSignal::Stt(SttEvent::SpeechStarted) => {
-                speech_started_at = Some(std::time::Instant::now());
+                if speech_started_at.is_none() {
+                    speech_started_at = Some(std::time::Instant::now());
+                }
                 if let Some(task) = active_response.take() {
                     task.abort();
                     output
@@ -925,6 +961,50 @@ mod tests {
             agent.transcripts.lock().await.as_slice(),
             &["first", "second"]
         );
+    }
+
+    #[tokio::test]
+    async fn local_vad_speech_detected_cancels_playback_and_clears_twilio() {
+        let (providers, event_tx, _, _, tts) = providers();
+        tts.pending.store(true, Ordering::SeqCst);
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (output_tx, mut output_rx) = mpsc::channel(8);
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
+        event_tx
+            .send(SttEvent::FinalTranscript("first".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            output_rx.recv().await,
+            Some(CallCommand::Media(Bytes::from_static(&[1, 2])))
+        );
+        assert_eq!(
+            output_rx.recv().await,
+            Some(CallCommand::Media(Bytes::from_static(&[3, 4])))
+        );
+
+        // Send two frames of high-energy speech audio (0x90 expands to ~2000 linear RMS)
+        input_tx
+            .send(CallEvent::Audio(Bytes::from(vec![0x90; 160])))
+            .await
+            .unwrap();
+        input_tx
+            .send(CallEvent::Audio(Bytes::from(vec![0x90; 160])))
+            .await
+            .unwrap();
+
+        let clear = tokio::time::timeout(std::time::Duration::from_millis(200), output_rx.recv())
+            .await
+            .unwrap();
+        assert_eq!(clear, Some(CallCommand::Clear));
+
+        input_tx.send(CallEvent::Stop).await.unwrap();
+        session.await.unwrap().unwrap();
     }
 
     #[tokio::test]
