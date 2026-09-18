@@ -38,7 +38,7 @@ enum SessionSignal {
 
 pub async fn run_voice_session(
     providers: ProviderSet,
-    context: CallContext,
+    mut context: CallContext,
     mut input: mpsc::Receiver<CallEvent>,
     output: mpsc::Sender<CallCommand>,
 ) -> Result<(), VoiceError> {
@@ -50,12 +50,16 @@ pub async fn run_voice_session(
     let last_audio_at = Arc::new(std::sync::Mutex::new(None));
     let input_last_audio = last_audio_at.clone();
 
+    let speech_accumulator = Arc::new(std::sync::Mutex::new(crate::voice::embedding::SpeechAccumulator::new()));
+    let input_speech_accumulator = speech_accumulator.clone();
+
     let mut vad = crate::voice::vad::VoiceActivityDetector::new();
     let input_task = tokio::spawn(async move {
         while let Some(event) = input.recv().await {
             match event {
                 CallEvent::Audio(audio) => {
                     *input_last_audio.lock().unwrap() = Some(std::time::Instant::now());
+                    input_speech_accumulator.lock().unwrap().push_frame(&audio);
                     if vad.process_frame(&audio) == crate::voice::vad::VadEvent::SpeechStarted {
                         let _ = input_signal.send(SessionSignal::SpeechDetected).await;
                     }
@@ -179,6 +183,13 @@ pub async fn run_voice_session(
                     last_audio_at: last_audio,
                     transcript_received_at: now,
                 };
+
+                if context.voice_signature.is_none() {
+                    let sig = speech_accumulator.lock().unwrap().extract_signature();
+                    if sig.is_some() {
+                        context.voice_signature = sig;
+                    }
+                }
 
                 if active_response.is_some() {
                     pending_transcripts.push_back((transcript, timing));
