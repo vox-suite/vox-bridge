@@ -21,6 +21,8 @@ struct RespondRequest<'a> {
     external_conversation_id: &'a str,
     text: &'a str,
     initiation_context: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    voice_signature: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -69,6 +71,7 @@ impl AgentProvider for CoreAgentClient {
                 external_conversation_id: &context.external_conversation_id,
                 text: transcript,
                 initiation_context: context.initiation_context.as_deref(),
+                voice_signature: context.voice_signature.as_deref(),
             })
             .send()
             .await
@@ -97,6 +100,7 @@ impl AgentProvider for CoreAgentClient {
             external_conversation_id: &context.external_conversation_id,
             text: transcript,
             initiation_context: context.initiation_context.as_deref(),
+            voice_signature: context.voice_signature.as_deref(),
         };
 
         let start_time = std::time::Instant::now();

@@ -809,6 +809,7 @@ mod tests {
             external_identity: "+14155550100".into(),
             external_conversation_id: "CA123".into(),
             initiation_context: None,
+            voice_signature: None,
         }
     }
 

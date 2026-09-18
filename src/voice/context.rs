@@ -4,4 +4,5 @@ pub struct CallContext {
     pub external_identity: String,
     pub external_conversation_id: String,
     pub initiation_context: Option<String>,
+    pub voice_signature: Option<String>,
 }

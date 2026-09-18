@@ -30,6 +30,7 @@ async fn sends_authenticated_call_context_to_core() {
         external_identity: "+919876543210".into(),
         external_conversation_id: "CA123".into(),
         initiation_context: None,
+        voice_signature: None,
     };
 
     let response = client.respond(&context, "hello").await.unwrap();
@@ -61,6 +62,7 @@ async fn streams_sse_tokens_from_core_stream_endpoint() {
         external_identity: "+919876543210".into(),
         external_conversation_id: "CA123".into(),
         initiation_context: None,
+        voice_signature: None,
     };
 
     let mut stream = client.respond_stream(&context, "hello").await.unwrap();
@@ -89,6 +91,7 @@ async fn stream_falls_back_to_unary_when_stream_endpoint_returns_404() {
         external_identity: "+919876543210".into(),
         external_conversation_id: "CA123".into(),
         initiation_context: None,
+        voice_signature: None,
     };
 
     let mut stream = client.respond_stream(&context, "hello").await.unwrap();
