@@ -102,9 +102,13 @@ pub async fn run_voice_session(
     let mut pending_transcripts: VecDeque<(String, TurnTiming)> = VecDeque::new();
     let mut speech_started_at: Option<std::time::Instant> = None;
     let mut failure = None;
+    let audio_playing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut current_active_prompt: Option<String> = None;
+    let mut interrupted_prompt_buffer: Option<String> = None;
 
     if let Some(ref opening) = context.initiation_context {
         response_number += 1;
+        current_active_prompt = Some(opening.clone());
         active_response = Some(spawn_response(
             response_number,
             context.clone(),
@@ -115,6 +119,7 @@ pub async fn run_voice_session(
             providers.jev.clone(),
             output.clone(),
             signal_tx.clone(),
+            audio_playing.clone(),
         ));
     }
 
@@ -132,9 +137,22 @@ pub async fn run_voice_session(
                             .send(CallCommand::Clear)
                             .await
                             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+
+                        let was_speaking = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
+                        if let Some(interrupted) = current_active_prompt.take() {
+                            if !was_speaking && !interrupted.starts_with("The call just connected") {
+                                interrupted_prompt_buffer = Some(match interrupted_prompt_buffer.take() {
+                                    Some(prev) => format!("{prev} {interrupted}"),
+                                    None => interrupted,
+                                });
+                            } else {
+                                interrupted_prompt_buffer = None;
+                            }
+                        }
                     }
                     if let Some((transcript, timing)) = pending_transcripts.pop_front() {
                         response_number += 1;
+                        current_active_prompt = Some(transcript.clone());
                         active_response = Some(spawn_response(
                             response_number,
                             context.clone(),
@@ -145,6 +163,7 @@ pub async fn run_voice_session(
                             providers.jev.clone(),
                             output.clone(),
                             signal_tx.clone(),
+                            audio_playing.clone(),
                         ));
                     }
                 }
@@ -159,9 +178,22 @@ pub async fn run_voice_session(
                         .send(CallCommand::Clear)
                         .await
                         .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+
+                    let was_speaking = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
+                    if let Some(interrupted) = current_active_prompt.take() {
+                        if !was_speaking && !interrupted.starts_with("The call just connected") {
+                            interrupted_prompt_buffer = Some(match interrupted_prompt_buffer.take() {
+                                Some(prev) => format!("{prev} {interrupted}"),
+                                None => interrupted,
+                            });
+                        } else {
+                            interrupted_prompt_buffer = None;
+                        }
+                    }
                 }
                 if let Some((transcript, timing)) = pending_transcripts.pop_front() {
                     response_number += 1;
+                    current_active_prompt = Some(transcript.clone());
                     active_response = Some(spawn_response(
                         response_number,
                         context.clone(),
@@ -172,10 +204,11 @@ pub async fn run_voice_session(
                         providers.jev.clone(),
                         output.clone(),
                         signal_tx.clone(),
+                        audio_playing.clone(),
                     ));
                 }
             }
-            SessionSignal::Stt(SttEvent::FinalTranscript(transcript)) => {
+            SessionSignal::Stt(SttEvent::FinalTranscript(mut transcript)) => {
                 let now = std::time::Instant::now();
                 let last_audio = last_audio_at.lock().unwrap().take();
                 let timing = TurnTiming {
@@ -183,6 +216,15 @@ pub async fn run_voice_session(
                     last_audio_at: last_audio,
                     transcript_received_at: now,
                 };
+
+                if let Some(prev) = interrupted_prompt_buffer.take() {
+                    tracing::info!(
+                        prev = %prev,
+                        continuation = %transcript,
+                        "Stitching fragmented speech turns from interrupted utterance"
+                    );
+                    transcript = format!("{prev} {transcript}");
+                }
 
                 if context.voice_signature.is_none() {
                     let sig = speech_accumulator.lock().unwrap().extract_signature();
@@ -195,6 +237,7 @@ pub async fn run_voice_session(
                     pending_transcripts.push_back((transcript, timing));
                 } else {
                     response_number += 1;
+                    current_active_prompt = Some(transcript.clone());
                     active_response = Some(spawn_response(
                         response_number,
                         context.clone(),
@@ -205,14 +248,19 @@ pub async fn run_voice_session(
                         providers.jev.clone(),
                         output.clone(),
                         signal_tx.clone(),
+                        audio_playing.clone(),
                     ));
                 }
             }
             SessionSignal::ResponseFinished(number) => {
                 if number == response_number {
                     active_response.take();
+                    current_active_prompt = None;
+                    interrupted_prompt_buffer = None;
+                    audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
                     if let Some((transcript, timing)) = pending_transcripts.pop_front() {
                         response_number += 1;
+                        current_active_prompt = Some(transcript.clone());
                         active_response = Some(spawn_response(
                             response_number,
                             context.clone(),
@@ -223,6 +271,7 @@ pub async fn run_voice_session(
                             providers.jev.clone(),
                             output.clone(),
                             signal_tx.clone(),
+                            audio_playing.clone(),
                         ));
                     }
                 }
@@ -259,9 +308,22 @@ fn spawn_response(
     jev: Option<Arc<crate::agents::BridgeJevClient>>,
     output: mpsc::Sender<CallCommand>,
     signal: mpsc::Sender<SessionSignal>,
+    audio_playing: Arc<std::sync::atomic::AtomicBool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let result = stream_response(number, &context, &transcript, timing, agent, tts, jev.as_deref(), output).await;
+        let result = stream_response(
+            number,
+            &context,
+            &transcript,
+            timing,
+            agent,
+            tts,
+            jev.as_deref(),
+            output,
+            audio_playing.clone(),
+        )
+        .await;
+        audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
         if let Err(error) = result {
             tracing::warn!(provider_error = %error, "voice response failed");
         }
@@ -418,6 +480,7 @@ async fn stream_response(
     tts: Arc<dyn crate::voice::provider::TtsProvider>,
     jev: Option<&crate::agents::BridgeJevClient>,
     output: mpsc::Sender<CallCommand>,
+    audio_playing: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), VoiceError> {
     let turn_started_at = std::time::Instant::now();
     let llm_request_start = std::time::Instant::now();
@@ -447,7 +510,7 @@ async fn stream_response(
             filler = %filler,
             "Playing immediate conversational filler for tool / lookup query concurrently with LLM stream"
         );
-        let filler_fut = play_sentence(filler, tts.as_ref(), &output, &mut first_audio_sent_at);
+        let filler_fut = play_sentence(filler, tts.as_ref(), &output, &mut first_audio_sent_at, &audio_playing);
         let stream_fut = tokio::time::timeout(
             Duration::from_secs(30),
             agent.respond_stream(context, transcript),
@@ -507,7 +570,7 @@ async fn stream_response(
                 first_sentence_at = Some(std::time::Instant::now());
                 first_sentence_text = Some(trimmed.to_string());
             }
-            match play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await {
+            match play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at, &audio_playing).await {
                 Ok(ttfb) => {
                     if first_tts_ttfb_ms.is_none() {
                         first_tts_ttfb_ms = Some(ttfb);
@@ -532,7 +595,7 @@ async fn stream_response(
                     first_sentence_at = Some(std::time::Instant::now());
                     first_sentence_text = Some(trimmed.to_string());
                 }
-                match play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at).await {
+                match play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at, &audio_playing).await {
                     Ok(ttfb) => {
                         if first_tts_ttfb_ms.is_none() {
                             first_tts_ttfb_ms = Some(ttfb);
@@ -569,6 +632,7 @@ async fn stream_response(
         all_audio_sent_at,
     );
 
+    audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
@@ -577,6 +641,7 @@ async fn play_sentence(
     tts: &dyn crate::voice::provider::TtsProvider,
     output: &mpsc::Sender<CallCommand>,
     first_audio_tracker: &mut Option<std::time::Instant>,
+    audio_playing: &std::sync::atomic::AtomicBool,
 ) -> Result<u128, VoiceError> {
     let text = sentence.trim();
     if text.is_empty() || !text.chars().any(|c| c.is_alphabetic()) {
@@ -596,6 +661,8 @@ async fn play_sentence(
             .send(CallCommand::Media(chunk_bytes))
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+
+        audio_playing.store(true, std::sync::atomic::Ordering::SeqCst);
 
         let now = std::time::Instant::now();
         if is_first_chunk {
@@ -1017,6 +1084,51 @@ mod tests {
 
         input_tx.send(CallEvent::Stop).await.unwrap();
         session.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn speech_interrupted_before_playback_stitches_fragments() {
+        let (providers, event_tx, _, agent, tts) = providers();
+        tts.pending.store(true, Ordering::SeqCst);
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let (output_tx, mut output_rx) = mpsc::channel(8);
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
+        // First fragment emitted
+        event_tx
+            .send(SttEvent::FinalTranscript("Can you".into()))
+            .await
+            .unwrap();
+
+        // User immediately continues speaking before any audio is sent
+        event_tx.send(SttEvent::SpeechStarted).await.unwrap();
+        let clear = tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv())
+            .await
+            .unwrap();
+        assert_eq!(clear, Some(CallCommand::Clear));
+
+        tts.pending.store(false, Ordering::SeqCst);
+        // Second fragment emitted
+        event_tx
+            .send(SttEvent::FinalTranscript("remind me of chess".into()))
+            .await
+            .unwrap();
+
+        for _ in 0..3 {
+            output_rx.recv().await.unwrap();
+        }
+        input_tx.send(CallEvent::Stop).await.unwrap();
+        session.await.unwrap().unwrap();
+
+        // Verify the two fragments were stitched into one coherent prompt!
+        assert_eq!(
+            agent.transcripts.lock().await.as_slice(),
+            &["Can you remind me of chess"]
+        );
     }
 
     #[tokio::test]
