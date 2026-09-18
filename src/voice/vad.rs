@@ -34,6 +34,7 @@ pub fn calculate_rms(mulaw_bytes: &[u8]) -> f32 {
 }
 
 /// Calculates the zero-crossing rate (ZCR) of a buffer of μ-law audio samples.
+#[allow(dead_code)]
 pub fn calculate_zcr(mulaw_bytes: &[u8]) -> f32 {
     if mulaw_bytes.len() < 2 {
         return 0.0;
@@ -108,6 +109,7 @@ impl VoiceActivityDetector {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_threshold(threshold: f32) -> Self {
         let mut vad = Self::new();
         vad.speech_threshold = threshold;
@@ -166,20 +168,24 @@ impl VoiceActivityDetector {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn is_speaking(&self) -> bool {
         self.is_speaking
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn current_rms(&self) -> f32 {
         self.last_rms
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn noise_floor(&self) -> f32 {
         self.noise_floor
     }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.consecutive_speech_frames = 0;
         self.silent_frame_count = 0;

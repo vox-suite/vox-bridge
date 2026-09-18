@@ -251,6 +251,7 @@ impl SpeechAccumulator {
     }
 
     /// Returns true if at least 1 second of speech audio has been captured (>= 8000 bytes).
+    #[allow(dead_code)]
     pub fn has_sufficient_speech(&self) -> bool {
         self.accumulated_mulaw.len() >= 160 * 50 // 1.0 second (50 frames)
     }
@@ -287,6 +288,7 @@ impl SpeechAccumulator {
         Some(sig.to_string())
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.accumulated_mulaw.clear();
     }
