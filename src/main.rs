@@ -74,7 +74,7 @@ async fn main() {
         twilio_auth_token: Arc::new(twilio_auth_token),
         twilio_from_number: Arc::new(twilio_from_number),
         service_token: Arc::new(service_token),
-        core_url: Arc::new(core_url),
+        core_url: Arc::new(core_url.clone()),
         telephony,
         voice,
     });

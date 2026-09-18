@@ -161,7 +161,7 @@ where
 {
     stream::unfold(
         (bytes_stream, String::new(), false),
-        |(mut stream, mut buffer, mut done)| async move {
+        |(mut stream, mut buffer, done)| async move {
             if done {
                 return None;
             }
@@ -178,7 +178,6 @@ where
                     if let Some(data) = line.strip_prefix("data:") {
                         let data = data.trim();
                         if data == "[DONE]" {
-                            done = true;
                             return None;
                         }
 
