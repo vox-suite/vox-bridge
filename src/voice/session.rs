@@ -226,11 +226,9 @@ pub async fn run_voice_session(
                     transcript = format!("{prev} {transcript}");
                 }
 
-                if context.voice_signature.is_none() {
-                    let sig = speech_accumulator.lock().unwrap().extract_signature();
-                    if sig.is_some() {
-                        context.voice_signature = sig;
-                    }
+                if let Some(sig) = speech_accumulator.lock().unwrap().extract_signature() {
+                    context.voice_signature = Some(sig);
+                    speech_accumulator.lock().unwrap().clear();
                 }
 
                 if active_response.is_some() {

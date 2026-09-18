@@ -199,6 +199,19 @@ pub fn compute_speaker_embedding(fbank_frames: &[Vec<f32>]) -> Vec<f32> {
         }
     }
 
+    // Cepstral Mean Normalization (CMN):
+    // Removes the static channel transfer function and telephony bandpass offset,
+    // centering the acoustic representation on speaker-specific vocal tract variations.
+    let mean_of_means = means.iter().sum::<f32>() / FBANK_NUM_BINS as f32;
+    for m in &mut means {
+        *m -= mean_of_means;
+    }
+
+    let mean_of_vars = vars.iter().sum::<f32>() / FBANK_NUM_BINS as f32;
+    for v in &mut vars {
+        *v -= mean_of_vars;
+    }
+
     // Concatenate 80 (mean) + 80 (std) + 32 (dynamics) = 192 dimensions
     let mut embedding = Vec::with_capacity(EMBEDDING_DIM);
     embedding.extend_from_slice(&means);
@@ -242,11 +255,16 @@ impl SpeechAccumulator {
     }
 
     /// Appends a raw G.711 μ-law audio frame (160 bytes).
+    /// Filters out background silence and maintains a rolling window of recent speech.
     pub fn push_frame(&mut self, frame: &[u8]) {
-        if self.accumulated_mulaw.len() < self.max_samples {
-            let available = self.max_samples - self.accumulated_mulaw.len();
-            let to_take = frame.len().min(available);
-            self.accumulated_mulaw.extend_from_slice(&frame[..to_take]);
+        let rms = crate::voice::vad::calculate_rms(frame);
+        // Only accumulate frames with audible acoustic energy (RMS >= 250), filtering out ambient silence
+        if rms >= 250.0 {
+            if self.accumulated_mulaw.len() + frame.len() > self.max_samples {
+                let excess = (self.accumulated_mulaw.len() + frame.len()) - self.max_samples;
+                self.accumulated_mulaw.drain(0..excess);
+            }
+            self.accumulated_mulaw.extend_from_slice(frame);
         }
     }
 
