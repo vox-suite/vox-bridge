@@ -95,7 +95,7 @@ impl VoiceActivityDetector {
             .or_else(|_| std::env::var("VAD_THRESHOLD"))
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
-            .unwrap_or(450.0);
+            .unwrap_or(650.0);
 
         Self {
             speech_threshold: threshold,

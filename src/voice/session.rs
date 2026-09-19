@@ -126,11 +126,12 @@ pub async fn run_voice_session(
     while let Some(signal) = signal_rx.recv().await {
         match signal {
             SessionSignal::SpeechDetected => {
-                if active_response.is_some() {
-                    tracing::info!("Local VAD: Voice detected, executing instant barge-in interruption");
-                    if speech_started_at.is_none() {
-                        speech_started_at = Some(std::time::Instant::now());
-                    }
+                if speech_started_at.is_none() {
+                    speech_started_at = Some(std::time::Instant::now());
+                }
+                // Only execute barge-in interruption if the assistant is actively playing audio aloud
+                if active_response.is_some() && audio_playing.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracing::info!("Local VAD: Voice detected during active playback, executing barge-in interruption");
                     if let Some(task) = active_response.take() {
                         task.abort();
                         output
@@ -172,40 +173,44 @@ pub async fn run_voice_session(
                 if speech_started_at.is_none() {
                     speech_started_at = Some(std::time::Instant::now());
                 }
-                if let Some(task) = active_response.take() {
-                    task.abort();
-                    output
-                        .send(CallCommand::Clear)
-                        .await
-                        .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+                // Only execute barge-in interruption if the assistant is actively playing audio aloud
+                if active_response.is_some() && audio_playing.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracing::info!("STT: Speech started during active playback, executing barge-in interruption");
+                    if let Some(task) = active_response.take() {
+                        task.abort();
+                        output
+                            .send(CallCommand::Clear)
+                            .await
+                            .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
 
-                    let was_speaking = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
-                    if let Some(interrupted) = current_active_prompt.take() {
-                        if !was_speaking && !interrupted.starts_with("The call just connected") {
-                            interrupted_prompt_buffer = Some(match interrupted_prompt_buffer.take() {
-                                Some(prev) => format!("{prev} {interrupted}"),
-                                None => interrupted,
-                            });
-                        } else {
-                            interrupted_prompt_buffer = None;
+                        let was_speaking = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
+                        if let Some(interrupted) = current_active_prompt.take() {
+                            if !was_speaking && !interrupted.starts_with("The call just connected") {
+                                interrupted_prompt_buffer = Some(match interrupted_prompt_buffer.take() {
+                                    Some(prev) => format!("{prev} {interrupted}"),
+                                    None => interrupted,
+                                });
+                            } else {
+                                interrupted_prompt_buffer = None;
+                            }
                         }
                     }
-                }
-                if let Some((transcript, timing)) = pending_transcripts.pop_front() {
-                    response_number += 1;
-                    current_active_prompt = Some(transcript.clone());
-                    active_response = Some(spawn_response(
-                        response_number,
-                        context.clone(),
-                        transcript,
-                        Some(timing),
-                        providers.agent.clone(),
-                        providers.tts.clone(),
-                        providers.jev.clone(),
-                        output.clone(),
-                        signal_tx.clone(),
-                        audio_playing.clone(),
-                    ));
+                    if let Some((transcript, timing)) = pending_transcripts.pop_front() {
+                        response_number += 1;
+                        current_active_prompt = Some(transcript.clone());
+                        active_response = Some(spawn_response(
+                            response_number,
+                            context.clone(),
+                            transcript,
+                            Some(timing),
+                            providers.agent.clone(),
+                            providers.tts.clone(),
+                            providers.jev.clone(),
+                            output.clone(),
+                            signal_tx.clone(),
+                            audio_playing.clone(),
+                        ));
+                    }
                 }
             }
             SessionSignal::Stt(SttEvent::FinalTranscript(mut transcript)) => {
@@ -226,9 +231,19 @@ pub async fn run_voice_session(
                     transcript = format!("{prev} {transcript}");
                 }
 
-                if let Some(sig) = speech_accumulator.lock().unwrap().extract_signature() {
+                let accumulator = speech_accumulator.clone();
+                let sig = tokio::task::spawn_blocking(move || {
+                    let mut acc = accumulator.lock().unwrap();
+                    let signature = acc.extract_signature();
+                    acc.clear();
+                    signature
+                })
+                .await
+                .ok()
+                .flatten();
+
+                if let Some(sig) = sig {
                     context.voice_signature = Some(sig);
-                    speech_accumulator.lock().unwrap().clear();
                 }
 
                 if active_response.is_some() {
