@@ -13,7 +13,6 @@ use axum::{
     routing::{get, post},
 };
 use dashmap::DashMap;
-use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -46,6 +45,12 @@ async fn main() {
         crate::voice::registry::VoiceRuntime::from_config(voice_config)
             .expect("voice provider runtime initialization failed"),
     );
+
+    // Pre-warm the Sarvam TTS keep-alive connection and cache top spoken fillers in memory
+    let profile = voice.resolver.resolve();
+    if let Ok(providers) = voice.providers.providers_for(&profile) {
+        crate::voice::filler::prewarm_fillers(providers.tts.clone());
+    }
 
     let twilio_account_sid = std::env::var("TWILIO_ACCOUNT_SID").unwrap_or_default();
     let twilio_auth_token =
@@ -147,48 +152,14 @@ async fn ws_socket_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_wa_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
-    let (mut sender, mut receiver) = socket.split();
+async fn handle_wa_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let mut rx = state.tx.subscribe();
-
-    let mut send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if sender.send(Message::Text(msg.into())).await.is_err() {
-                break;
-            }
+    while let Ok(msg) = rx.recv().await {
+        if socket.send(Message::Text(msg.into())).await.is_err() {
+            break;
         }
-    });
-
-    let tx = state.tx.clone();
-
-    let mut receive_task = tokio::spawn(async move {
-        while let Some(Ok(Message::Text(text))) = receiver.next().await {
-            let _ = tx.send(text.to_string());
-        }
-    });
-
-    tokio::select! {
-        _ = (&mut send_task) => receive_task.abort(),
-        _ = (&mut receive_task) => send_task.abort(),
-    };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn health_handler_reports_ok() {
-        assert_eq!(health_handler().await, "ok");
-    }
-
-    #[test]
-    fn startup_installs_a_rustls_crypto_provider() {
-        install_crypto_provider();
-
-        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
     }
 }

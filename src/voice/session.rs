@@ -359,171 +359,7 @@ fn spawn_response(
     })
 }
 
-/// Detects if an incoming transcript is a lookup, search, or multi-step action that benefits
-/// from an immediate fast audio filler / verbal acknowledgment to eliminate telephony dead air.
-pub async fn detect_action_filler(
-    transcript: &str,
-    jev: Option<&crate::agents::BridgeJevClient>,
-) -> Option<&'static str> {
-    let lower = transcript.to_ascii_lowercase();
-    let trimmed = lower.trim();
-
-    // Do not play fillers for greetings, short social pleasantries, or simple confirmations
-    if trimmed.is_empty()
-        || trimmed.starts_with("the call just connected")
-        || trimmed == "hi"
-        || trimmed == "hello"
-        || trimmed == "hey"
-        || trimmed == "nope"
-        || trimmed == "nope."
-        || trimmed == "yes"
-        || trimmed == "yeah"
-        || trimmed == "no"
-        || trimmed == "ok"
-        || trimmed == "okay"
-        || trimmed == "cool"
-        || trimmed == "thanks"
-        || trimmed == "thank you"
-        || trimmed == "cool, thanks"
-        || trimmed == "cool, thanks."
-        || trimmed == "nothing"
-        || trimmed == "nothing. bye"
-        || trimmed == "nothing. bye."
-        || trimmed == "bye"
-        || trimmed == "goodbye"
-        || trimmed.starts_with("my name is")
-        || trimmed.starts_with("i am ")
-        || trimmed.starts_with("i'm ")
-        || trimmed.starts_with("call me ")
-    {
-        return None;
-    }
-
-    // Fast local domain keyword heuristics first (<0.01ms zero-allocation match)
-    if trimmed.contains("stock price")
-        || trimmed.contains("stock")
-        || trimmed.contains("trading at")
-    {
-        return Some("Let me look that up.");
-    }
-    if trimmed.contains("coffee")
-        || trimmed.contains("drive there")
-        || trimmed.contains("how long")
-        || trimmed.contains("route")
-        || trimmed.contains("traffic")
-    {
-        return Some("Checking that for you.");
-    }
-    if trimmed.contains("cricket")
-        || trimmed.contains("search for")
-        || trimmed.contains("search")
-        || trimmed.contains("find")
-    {
-        return Some("Let me check that for you.");
-    }
-
-    let action_keywords = [
-        "look up",
-        "lookup",
-        "check",
-        "weather",
-        "remind",
-        "add a task",
-        "add task",
-        "log a",
-        "create a",
-        "schedule",
-        "calculate",
-        "tell me about",
-    ];
-
-    for kw in action_keywords {
-        if trimmed.contains(kw) {
-            return Some("Let me check that for you.");
-        }
-    }
-
-    // High-accuracy Jev Choice evaluation if available
-    if let Some(client) = jev {
-        let state = serde_json::json!({ "transcript": transcript });
-        if let Ok((choice, confidence)) = client
-            .choice(
-                state,
-                "Select the appropriate immediate spoken acknowledgment for this request.",
-                &[
-                    ("none", Some("Pure conversational question, greeting, acknowledgment, or question answerable without external lookups")),
-                    ("search", Some("General web lookups, current facts, sports scores, stock prices, weather")),
-                    ("navigation", Some("Finding places, cafes, coffee shops, driving time, distance, traffic, or directions")),
-                    ("organizing", Some("Adding tasks, calendar events, saving notes, reminders, or scheduling")),
-                ],
-            )
-            .await
-        {
-            match choice.as_str() {
-                "search" if confidence >= 0.70 => return Some("Let me look that up for you."),
-                "navigation" if confidence >= 0.70 => return Some("Checking that for you."),
-                "organizing" if confidence >= 0.70 => return Some("I'll take care of that for you."),
-                _ => {}
-            }
-        }
-    }
-
-    if trimmed.split_whitespace().count() >= 6
-        && (trimmed.contains('?')
-            || trimmed.starts_with("what ")
-            || trimmed.starts_with("where ")
-            || trimmed.starts_with("when ")
-            || trimmed.starts_with("who ")
-            || trimmed.starts_with("how "))
-    {
-        return Some("Let me check that for you.");
-    }
-
-    None
-}
-
-/// Strips duplicate leading conversational acknowledgments (e.g. "On it.", "Done.") from
-/// the core LLM response if an immediate filler was already played aloud.
-pub fn strip_leading_ack(sentence: &str) -> &str {
-    let acks = [
-        "on it.",
-        "on it,",
-        "on it!",
-        "on it",
-        "done.",
-        "done,",
-        "done!",
-        "done",
-        "got it.",
-        "got it,",
-        "got it!",
-        "got it",
-        "sure thing.",
-        "sure thing,",
-        "sure thing!",
-        "sure.",
-        "sure,",
-        "sure!",
-        "certainly.",
-        "certainly,",
-        "right away.",
-        "right away,",
-        "one moment.",
-        "one moment,",
-    ];
-    let lower = sentence.to_ascii_lowercase();
-    for ack in acks {
-        if lower.starts_with(ack) {
-            let remainder = sentence[ack.len()..].trim_start();
-            if remainder.chars().any(|c| c.is_alphabetic()) {
-                return remainder;
-            } else {
-                return "";
-            }
-        }
-    }
-    sentence
-}
+pub use crate::voice::filler::{detect_action_filler, play_filler, strip_leading_ack};
 
 #[allow(clippy::too_many_arguments)]
 async fn stream_response(
@@ -560,14 +396,14 @@ async fn stream_response(
     // Runs filler audio synthesis/playback in parallel with requesting the core LLM stream
     let mut filler_played = false;
     let (filler_result, text_stream_result) = if let Some(filler) =
-        detect_action_filler(transcript, jev).await
+        detect_action_filler(transcript, jev, number).await
     {
         tracing::info!(
             turn = number,
             filler = %filler,
             "Playing immediate conversational filler for tool / lookup query concurrently with LLM stream"
         );
-        let filler_fut = play_sentence(
+        let filler_fut = play_filler(
             filler,
             tts.as_ref(),
             &output,
@@ -1329,27 +1165,36 @@ mod tests {
         assert_eq!(
             detect_action_filler(
                 "Search for the date and opponent of India's next cricket match",
-                None
+                None,
+                0,
             )
             .await,
             Some("Let me check that for you.")
         );
         assert_eq!(
-            detect_action_filler("Look up the current stock price of Apple", None).await,
+            detect_action_filler("Look up the current stock price of Apple", None, 0).await,
             Some("Let me look that up.")
         );
         assert_eq!(
-            detect_action_filler("Find a special specialty coffee shop in Indiranagar", None).await,
+            detect_action_filler(
+                "Find a special specialty coffee shop in Indiranagar",
+                None,
+                0
+            )
+            .await,
             Some("Checking that for you.")
         );
         assert_eq!(
-            detect_action_filler("The call just connected. Greet the user.", None).await,
+            detect_action_filler("The call just connected. Greet the user.", None, 0).await,
             None
         );
-        assert_eq!(detect_action_filler("Nope.", None).await, None);
-        assert_eq!(detect_action_filler("My name is Rahul.", None).await, None);
-        assert_eq!(detect_action_filler("Cool, thanks.", None).await, None);
-        assert_eq!(detect_action_filler("Nothing. Bye.", None).await, None);
+        assert_eq!(detect_action_filler("Nope.", None, 0).await, None);
+        assert_eq!(
+            detect_action_filler("My name is Rahul.", None, 0).await,
+            None
+        );
+        assert_eq!(detect_action_filler("Cool, thanks.", None, 0).await, None);
+        assert_eq!(detect_action_filler("Nothing. Bye.", None, 0).await, None);
     }
 
     #[test]
