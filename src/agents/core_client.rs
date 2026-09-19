@@ -186,15 +186,19 @@ where
                         }
 
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(delta) = val.get("delta").and_then(|d| d.as_str()) {
-                                if !delta.is_empty() {
-                                    return Some((Ok(delta.to_string()), (stream, buffer, done)));
-                                }
+                            if let Some(delta) = val
+                                .get("delta")
+                                .and_then(|d| d.as_str())
+                                .filter(|d| !d.is_empty())
+                            {
+                                return Some((Ok(delta.to_string()), (stream, buffer, done)));
                             }
-                            if let Some(text) = val.get("text").and_then(|t| t.as_str()) {
-                                if !text.is_empty() {
-                                    return Some((Ok(text.to_string()), (stream, buffer, done)));
-                                }
+                            if let Some(text) = val
+                                .get("text")
+                                .and_then(|t| t.as_str())
+                                .filter(|t| !t.is_empty())
+                            {
+                                return Some((Ok(text.to_string()), (stream, buffer, done)));
                             }
                         } else if !data.is_empty() {
                             return Some((Ok(data.to_string()), (stream, buffer, done)));

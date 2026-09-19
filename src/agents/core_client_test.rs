@@ -1,11 +1,6 @@
 use super::core_client::CoreAgentClient;
 use crate::voice::{context::CallContext, provider::AgentProvider};
-use axum::{
-    Json, Router,
-    http::HeaderMap,
-    response::IntoResponse,
-    routing::post,
-};
+use axum::{Json, Router, http::HeaderMap, routing::post};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 
@@ -46,7 +41,8 @@ async fn streams_sse_tokens_from_core_stream_endpoint() {
             assert_eq!(headers["authorization"], "Bearer service-token");
             assert_eq!(headers["accept"], "text/event-stream");
             assert_eq!(body["text"], "hello");
-            let sse_body = "data: {\"delta\":\"Hello \"}\n\ndata: {\"delta\":\"Rahul!\"}\n\ndata: [DONE]\n\n";
+            let sse_body =
+                "data: {\"delta\":\"Hello \"}\n\ndata: {\"delta\":\"Rahul!\"}\n\ndata: [DONE]\n\n";
             axum::response::Response::builder()
                 .header("content-type", "text/event-stream")
                 .body(axum::body::Body::from(sse_body))

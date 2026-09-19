@@ -1,7 +1,7 @@
-/// Voice Activity Detector (VAD) for real-time telephony audio streams.
-///
-/// Operates directly on G.711 μ-law (PCMU) 8kHz audio frames from Twilio,
-/// detecting speech onset in <20ms to allow sub-50ms instant barge-in / interruption.
+//! Voice Activity Detector (VAD) for real-time telephony audio streams.
+//!
+//! Operates directly on G.711 μ-law (PCMU) 8kHz audio frames from Twilio,
+//! detecting speech onset in <20ms to allow sub-50ms instant barge-in / interruption.
 
 /// Converts an 8-bit G.711 μ-law sample to a 16-bit linear PCM signed integer.
 #[inline]
@@ -13,11 +13,7 @@ pub fn mulaw_to_linear(u_val: u8) -> i16 {
     let mut sample = ((mantissa as i16) << 3) + 0x84;
     sample <<= exponent;
     sample -= 0x84;
-    if sign != 0 {
-        -sample
-    } else {
-        sample
-    }
+    if sign != 0 { -sample } else { sample }
 }
 
 /// Calculates the Root Mean Square (RMS) energy of a buffer of μ-law audio samples.
@@ -140,12 +136,12 @@ impl VoiceActivityDetector {
             if !self.is_speaking {
                 if self.consecutive_speech_frames >= self.consecutive_onset_required {
                     self.is_speaking = true;
-                    return VadEvent::SpeechStarted;
+                    VadEvent::SpeechStarted
                 } else {
-                    return VadEvent::Silence;
+                    VadEvent::Silence
                 }
             } else {
-                return VadEvent::SpeechActive;
+                VadEvent::SpeechActive
             }
         } else {
             self.consecutive_speech_frames = 0;
@@ -155,14 +151,14 @@ impl VoiceActivityDetector {
                 if self.silent_frame_count >= self.hangover_frames_required {
                     self.is_speaking = false;
                     self.silent_frame_count = 0;
-                    return VadEvent::SpeechEnded;
+                    VadEvent::SpeechEnded
                 } else {
-                    return VadEvent::SpeechActive;
+                    VadEvent::SpeechActive
                 }
             } else {
                 // Adapt noise floor during silence (exponential moving average)
                 self.noise_floor = 0.95 * self.noise_floor + 0.05 * rms;
-                return VadEvent::Silence;
+                VadEvent::Silence
             }
         }
     }

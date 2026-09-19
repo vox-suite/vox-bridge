@@ -117,7 +117,10 @@ async fn main() {
             .timeout(std::time::Duration::from_secs(5))
             .build()
         {
-            let _ = client.get(format!("{prewarm_url}/health/ready")).send().await;
+            let _ = client
+                .get(format!("{prewarm_url}/health/ready"))
+                .send()
+                .await;
         }
     });
 

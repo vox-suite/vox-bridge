@@ -50,7 +50,9 @@ pub trait AgentProvider: Send + Sync {
         transcript: &str,
     ) -> Result<TextStream, VoiceError> {
         let text = self.respond(context, transcript).await?;
-        Ok(Box::pin(futures_util::stream::once(async move { Ok(text) })))
+        Ok(Box::pin(futures_util::stream::once(
+            async move { Ok(text) },
+        )))
     }
     async fn complete(&self, _context: &CallContext) -> Result<(), VoiceError> {
         Ok(())

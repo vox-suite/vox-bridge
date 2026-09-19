@@ -36,10 +36,8 @@ impl SentenceChunker {
                 sentences.push(sentence);
             }
         }
-        if flush {
-            if let Some(final_sentence) = self.flush() {
-                sentences.push(final_sentence);
-            }
+        if let Some(final_sentence) = flush.then(|| self.flush()).flatten() {
+            sentences.push(final_sentence);
         }
         sentences
     }
@@ -68,16 +66,32 @@ impl SentenceChunker {
                 in_word = true;
             }
 
+            let current_words = word_count + if in_word { 1 } else { 0 };
+
             // Check for sentence terminators: '.', '!', '?'
             if b == b'.' || b == b'!' || b == b'?' {
-                // Must be followed by whitespace, or newline, to be a valid boundary while streaming
                 let next_is_boundary = if i + 1 < len {
                     bytes[i + 1].is_ascii_whitespace()
                 } else {
-                    false // Do not split on trailing punctuation during stream (wait for next chunk or flush)
+                    // Trailing boundary: '!' and '?' are unambiguous sentence terminators.
+                    // '.' is a boundary unless preceded by a digit, dot, or abbreviation.
+                    if b == b'!' || b == b'?' {
+                        true
+                    } else if b == b'.' {
+                        let prev_digit = i > 0 && bytes[i - 1].is_ascii_digit();
+                        let prev_dot = i > 0 && bytes[i - 1] == b'.';
+                        let prefix = &self.buffer[..i];
+                        !prev_digit && !prev_dot && !is_abbreviation(prefix)
+                    } else {
+                        false
+                    }
                 };
 
                 if next_is_boundary {
+                    // For long sentences (>= 14 words), prioritize splitting at earlier clause boundary for lower latency
+                    if current_words >= 14 && last_clause_boundary.is_some() {
+                        return last_clause_boundary;
+                    }
                     // Ignore decimal numbers, e.g. "3.5" or "10.0"
                     if b == b'.' && i > 0 && i + 1 < len {
                         let prev = bytes[i - 1];
@@ -88,20 +102,16 @@ impl SentenceChunker {
                     }
 
                     // Ignore ellipsis "..."
-                    if b == b'.' {
-                        if (i > 0 && bytes[i - 1] == b'.')
-                            || (i + 1 < len && bytes[i + 1] == b'.')
-                        {
-                            continue;
-                        }
+                    if b == b'.'
+                        && ((i > 0 && bytes[i - 1] == b'.')
+                            || (i + 1 < len && bytes[i + 1] == b'.'))
+                    {
+                        continue;
                     }
 
                     // Ignore common abbreviations if it's a period
-                    if b == b'.' {
-                        let prefix = &self.buffer[..i];
-                        if is_abbreviation(prefix) {
-                            continue;
-                        }
+                    if b == b'.' && is_abbreviation(&self.buffer[..i]) {
+                        continue;
                     }
 
                     // Include trailing quotes or closing brackets if any
@@ -124,9 +134,9 @@ impl SentenceChunker {
                 }
             }
 
-            // Clause split fallback: If an unclosed sentence has >= 8 words and hits a comma/semicolon/colon
+            // Clause split fallback: If an unclosed sentence has >= 7 words and hits a comma/semicolon/colon
             if (b == b',' || b == b';' || b == b':')
-                && word_count >= 8
+                && current_words >= 7
                 && i + 1 < len
                 && bytes[i + 1].is_ascii_whitespace()
             {
@@ -135,10 +145,10 @@ impl SentenceChunker {
         }
 
         // If a sentence is unusually long (>= 14 words) with no period, split at the clause boundary
-        if word_count >= 14 && last_clause_boundary.is_some() {
+        let total_words = word_count + if in_word { 1 } else { 0 };
+        if total_words >= 14 && last_clause_boundary.is_some() {
             return last_clause_boundary;
         }
-
         None
     }
 }
@@ -152,7 +162,18 @@ fn is_abbreviation(prefix: &str) -> bool {
 
     matches!(
         last_word.to_ascii_lowercase().as_str(),
-        "mr" | "mrs" | "ms" | "dr" | "prof" | "sr" | "jr" | "vs" | "eg" | "ie" | "etc" | "st" | "ave"
+        "mr" | "mrs"
+            | "ms"
+            | "dr"
+            | "prof"
+            | "sr"
+            | "jr"
+            | "vs"
+            | "eg"
+            | "ie"
+            | "etc"
+            | "st"
+            | "ave"
     )
 }
 
@@ -166,11 +187,7 @@ mod tests {
         let sentences = chunker.push("Hello Rahul! How are you doing? I am good.");
         assert_eq!(
             sentences,
-            vec![
-                "Hello Rahul!",
-                "How are you doing?",
-                "I am good."
-            ]
+            vec!["Hello Rahul!", "How are you doing?", "I am good."]
         );
         assert_eq!(chunker.flush(), None);
     }
@@ -180,8 +197,9 @@ mod tests {
         let mut chunker = SentenceChunker::new();
         assert_eq!(chunker.push("Hello "), Vec::<String>::new());
         assert_eq!(chunker.push("Rahul! How "), vec!["Hello Rahul!"]);
-        assert_eq!(chunker.push("are you?"), Vec::<String>::new());
-        assert_eq!(chunker.flush(), Some("How are you?".to_string()));
+        // Immediate boundary emission on terminal punctuation (? or !) ensures zero latency lag
+        assert_eq!(chunker.push("are you?"), vec!["How are you?"]);
+        assert_eq!(chunker.flush(), None);
     }
 
     #[test]
@@ -190,10 +208,7 @@ mod tests {
         let sentences = chunker.push("Dr. Smith bought 3.5 kg of apples. That was great!");
         assert_eq!(
             sentences,
-            vec![
-                "Dr. Smith bought 3.5 kg of apples.",
-                "That was great!"
-            ]
+            vec!["Dr. Smith bought 3.5 kg of apples.", "That was great!"]
         );
     }
 

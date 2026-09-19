@@ -101,10 +101,13 @@ impl VoiceRuntime {
                 pace: profile.tts.pace,
             },
         ));
-        let jev: Option<Arc<crate::agents::BridgeJevClient>> = config
-            .secrets
-            .jev_api_key
-            .map(|key| Arc::new(crate::agents::BridgeJevClient::new(key, config.secrets.jev_base_url)));
+        let jev: Option<Arc<crate::agents::BridgeJevClient>> =
+            config.secrets.jev_api_key.map(|key| {
+                Arc::new(crate::agents::BridgeJevClient::new(
+                    key,
+                    config.secrets.jev_base_url,
+                ))
+            });
 
         Ok(Self {
             providers: Arc::new(ProviderRegistry {

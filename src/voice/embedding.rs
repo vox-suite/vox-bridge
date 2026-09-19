@@ -1,3 +1,4 @@
+#![allow(clippy::needless_range_loop)]
 use crate::voice::vad::mulaw_to_linear;
 use std::f32::consts::PI;
 
@@ -5,7 +6,7 @@ pub const DEFAULT_TARGET_SAMPLE_RATE: usize = 16000;
 pub const FBANK_NUM_BINS: usize = 80;
 pub const EMBEDDING_DIM: usize = 192;
 pub const WINDOW_SIZE_SAMPLES: usize = 400; // 25ms at 16kHz
-pub const HOP_SIZE_SAMPLES: usize = 160;   // 10ms at 16kHz
+pub const HOP_SIZE_SAMPLES: usize = 160; // 10ms at 16kHz
 pub const FFT_SIZE: usize = 512;
 
 /// Converts incoming 8kHz G.711 μ-law bytes into a 16kHz linear float waveform in [-1.0, 1.0].
@@ -94,23 +95,36 @@ pub fn build_mel_filterbank(num_bins: usize, fft_size: usize, sample_rate: usize
 }
 
 /// Computes power spectrum for a 400-sample window using a Hamming window and 512-point real DFT.
-pub fn compute_window_power_spectrum(samples: &[f32], window_size: usize, fft_size: usize) -> Vec<f32> {
+pub fn compute_window_power_spectrum(
+    samples: &[f32],
+    window_size: usize,
+    fft_size: usize,
+) -> Vec<f32> {
     let num_bins = fft_size / 2 + 1;
     let mut power = vec![0.0f32; num_bins];
+
+    // Precompute windowed samples once per frame (eliminating N * num_bins redundant hamming calculations)
+    let mut windowed = Vec::with_capacity(window_size);
+    let n_denom = (window_size - 1) as f32;
+    for n in 0..window_size {
+        if n < samples.len() {
+            let hamming = 0.54 - 0.46 * (2.0 * PI * n as f32 / n_denom).cos();
+            windowed.push(samples[n] * hamming);
+        } else {
+            windowed.push(0.0);
+        }
+    }
 
     for k in 0..num_bins {
         let mut real = 0.0f32;
         let mut imag = 0.0f32;
         let angle_step = 2.0 * PI * k as f32 / fft_size as f32;
 
-        for n in 0..window_size {
-            if n < samples.len() {
-                // Hamming window: 0.54 - 0.46 * cos(2*pi*n / (N - 1))
-                let hamming = 0.54 - 0.46 * (2.0 * PI * n as f32 / (window_size - 1) as f32).cos();
-                let val = samples[n] * hamming;
+        for (n, &val) in windowed.iter().enumerate() {
+            if val != 0.0 {
                 let angle = angle_step * n as f32;
                 real += val * angle.cos();
-                imag -= val * angle.sin();
+                imag += val * angle.sin();
             }
         }
         power[k] = real * real + imag * imag;
@@ -120,10 +134,7 @@ pub fn compute_window_power_spectrum(samples: &[f32], window_size: usize, fft_si
 }
 
 /// Extracts Log-Mel filterbank energies: [num_frames, 80].
-pub fn compute_fbank(
-    waveform_16k: &[f32],
-    filterbank: &[Vec<f32>],
-) -> Vec<Vec<f32>> {
+pub fn compute_fbank(waveform_16k: &[f32], filterbank: &[Vec<f32>]) -> Vec<Vec<f32>> {
     if waveform_16k.len() < WINDOW_SIZE_SAMPLES {
         return Vec::new();
     }
@@ -193,8 +204,10 @@ pub fn compute_speaker_embedding(fbank_frames: &[Vec<f32>]) -> Vec<f32> {
 
         for i in 0..32 {
             let bin = i * (FBANK_NUM_BINS / 32);
-            let avg1: f32 = first_half.iter().map(|f| f[bin]).sum::<f32>() / first_half.len() as f32;
-            let avg2: f32 = second_half.iter().map(|f| f[bin]).sum::<f32>() / second_half.len() as f32;
+            let avg1: f32 =
+                first_half.iter().map(|f| f[bin]).sum::<f32>() / first_half.len() as f32;
+            let avg2: f32 =
+                second_half.iter().map(|f| f[bin]).sum::<f32>() / second_half.len() as f32;
             dynamics[i] = avg2 - avg1;
         }
     }

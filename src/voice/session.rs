@@ -50,7 +50,9 @@ pub async fn run_voice_session(
     let last_audio_at = Arc::new(std::sync::Mutex::new(None));
     let input_last_audio = last_audio_at.clone();
 
-    let speech_accumulator = Arc::new(std::sync::Mutex::new(crate::voice::embedding::SpeechAccumulator::new()));
+    let speech_accumulator = Arc::new(std::sync::Mutex::new(
+        crate::voice::embedding::SpeechAccumulator::new(),
+    ));
     let input_speech_accumulator = speech_accumulator.clone();
 
     let mut vad = crate::voice::vad::VoiceActivityDetector::new();
@@ -130,8 +132,12 @@ pub async fn run_voice_session(
                     speech_started_at = Some(std::time::Instant::now());
                 }
                 // Only execute barge-in interruption if the assistant is actively playing audio aloud
-                if active_response.is_some() && audio_playing.load(std::sync::atomic::Ordering::SeqCst) {
-                    tracing::info!("Local VAD: Voice detected during active playback, executing barge-in interruption");
+                if active_response.is_some()
+                    && audio_playing.load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    tracing::info!(
+                        "Local VAD: Voice detected during active playback, executing barge-in interruption"
+                    );
                     if let Some(task) = active_response.take() {
                         task.abort();
                         output
@@ -139,13 +145,16 @@ pub async fn run_voice_session(
                             .await
                             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
 
-                        let was_speaking = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
+                        let was_speaking =
+                            audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
                         if let Some(interrupted) = current_active_prompt.take() {
-                            if !was_speaking && !interrupted.starts_with("The call just connected") {
-                                interrupted_prompt_buffer = Some(match interrupted_prompt_buffer.take() {
-                                    Some(prev) => format!("{prev} {interrupted}"),
-                                    None => interrupted,
-                                });
+                            if !was_speaking && !interrupted.starts_with("The call just connected")
+                            {
+                                interrupted_prompt_buffer =
+                                    Some(match interrupted_prompt_buffer.take() {
+                                        Some(prev) => format!("{prev} {interrupted}"),
+                                        None => interrupted,
+                                    });
                             } else {
                                 interrupted_prompt_buffer = None;
                             }
@@ -173,44 +182,45 @@ pub async fn run_voice_session(
                 if speech_started_at.is_none() {
                     speech_started_at = Some(std::time::Instant::now());
                 }
-                // Only execute barge-in interruption if the assistant is actively playing audio aloud
-                if active_response.is_some() && audio_playing.load(std::sync::atomic::Ordering::SeqCst) {
-                    tracing::info!("STT: Speech started during active playback, executing barge-in interruption");
-                    if let Some(task) = active_response.take() {
-                        task.abort();
-                        output
-                            .send(CallCommand::Clear)
-                            .await
-                            .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+                if let Some(task) = active_response.take() {
+                    tracing::info!(
+                        "STT: Speech started during active response, executing barge-in interruption"
+                    );
+                    task.abort();
+                    output
+                        .send(CallCommand::Clear)
+                        .await
+                        .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
 
-                        let was_speaking = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
-                        if let Some(interrupted) = current_active_prompt.take() {
-                            if !was_speaking && !interrupted.starts_with("The call just connected") {
-                                interrupted_prompt_buffer = Some(match interrupted_prompt_buffer.take() {
+                    let was_speaking =
+                        audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
+                    if let Some(interrupted) = current_active_prompt.take() {
+                        if !was_speaking && !interrupted.starts_with("The call just connected") {
+                            interrupted_prompt_buffer =
+                                Some(match interrupted_prompt_buffer.take() {
                                     Some(prev) => format!("{prev} {interrupted}"),
                                     None => interrupted,
                                 });
-                            } else {
-                                interrupted_prompt_buffer = None;
-                            }
+                        } else {
+                            interrupted_prompt_buffer = None;
                         }
                     }
-                    if let Some((transcript, timing)) = pending_transcripts.pop_front() {
-                        response_number += 1;
-                        current_active_prompt = Some(transcript.clone());
-                        active_response = Some(spawn_response(
-                            response_number,
-                            context.clone(),
-                            transcript,
-                            Some(timing),
-                            providers.agent.clone(),
-                            providers.tts.clone(),
-                            providers.jev.clone(),
-                            output.clone(),
-                            signal_tx.clone(),
-                            audio_playing.clone(),
-                        ));
-                    }
+                }
+                if let Some((transcript, timing)) = pending_transcripts.pop_front() {
+                    response_number += 1;
+                    current_active_prompt = Some(transcript.clone());
+                    active_response = Some(spawn_response(
+                        response_number,
+                        context.clone(),
+                        transcript,
+                        Some(timing),
+                        providers.agent.clone(),
+                        providers.tts.clone(),
+                        providers.jev.clone(),
+                        output.clone(),
+                        signal_tx.clone(),
+                        audio_playing.clone(),
+                    ));
                 }
             }
             SessionSignal::Stt(SttEvent::FinalTranscript(mut transcript)) => {
@@ -231,19 +241,23 @@ pub async fn run_voice_session(
                     transcript = format!("{prev} {transcript}");
                 }
 
-                let accumulator = speech_accumulator.clone();
-                let sig = tokio::task::spawn_blocking(move || {
-                    let mut acc = accumulator.lock().unwrap();
-                    let signature = acc.extract_signature();
-                    acc.clear();
-                    signature
-                })
-                .await
-                .ok()
-                .flatten();
+                if context.voice_signature.is_none() {
+                    let accumulator = speech_accumulator.clone();
+                    let sig = tokio::task::spawn_blocking(move || {
+                        let mut acc = accumulator.lock().unwrap();
+                        let signature = acc.extract_signature();
+                        acc.clear();
+                        signature
+                    })
+                    .await
+                    .ok()
+                    .flatten();
 
-                if let Some(sig) = sig {
-                    context.voice_signature = Some(sig);
+                    if let Some(sig) = sig {
+                        context.voice_signature = Some(sig);
+                    }
+                } else {
+                    speech_accumulator.lock().unwrap().clear();
                 }
 
                 if active_response.is_some() {
@@ -311,6 +325,7 @@ pub async fn run_voice_session(
     finish_result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_response(
     number: u64,
     context: CallContext,
@@ -384,35 +399,11 @@ pub async fn detect_action_filler(
         return None;
     }
 
-    // High-accuracy Jev Choice evaluation if available
-    if let Some(client) = jev {
-        let state = serde_json::json!({ "transcript": transcript });
-        if let Ok((choice, confidence)) = client
-            .choice(
-                state,
-                "Select the appropriate immediate spoken acknowledgment for this request.",
-                &[
-                    ("none", Some("Pure conversational question, greeting, acknowledgment, or question answerable without external lookups")),
-                    ("search", Some("General web lookups, current facts, sports scores, stock prices, weather")),
-                    ("navigation", Some("Finding places, cafes, coffee shops, driving time, distance, traffic, or directions")),
-                    ("organizing", Some("Adding tasks, calendar events, saving notes, reminders, or scheduling")),
-                ],
-            )
-            .await
-        {
-            if confidence >= 0.70 {
-                return match choice.as_str() {
-                    "search" => Some("Let me look that up for you."),
-                    "navigation" => Some("Checking that for you."),
-                    "organizing" => Some("I'll take care of that for you."),
-                    _ => None,
-                };
-            }
-        }
-    }
-
-    // Specific domain fillers
-    if trimmed.contains("stock price") || trimmed.contains("stock") || trimmed.contains("trading at") {
+    // Fast local domain keyword heuristics first (<0.01ms zero-allocation match)
+    if trimmed.contains("stock price")
+        || trimmed.contains("stock")
+        || trimmed.contains("trading at")
+    {
         return Some("Let me look that up.");
     }
     if trimmed.contains("coffee")
@@ -432,14 +423,48 @@ pub async fn detect_action_filler(
     }
 
     let action_keywords = [
-        "look up", "lookup", "check", "weather",
-        "remind", "add a task", "add task", "log a", "create a",
-        "schedule", "calculate", "tell me about",
+        "look up",
+        "lookup",
+        "check",
+        "weather",
+        "remind",
+        "add a task",
+        "add task",
+        "log a",
+        "create a",
+        "schedule",
+        "calculate",
+        "tell me about",
     ];
 
     for kw in action_keywords {
         if trimmed.contains(kw) {
             return Some("Let me check that for you.");
+        }
+    }
+
+    // High-accuracy Jev Choice evaluation if available
+    if let Some(client) = jev {
+        let state = serde_json::json!({ "transcript": transcript });
+        if let Ok((choice, confidence)) = client
+            .choice(
+                state,
+                "Select the appropriate immediate spoken acknowledgment for this request.",
+                &[
+                    ("none", Some("Pure conversational question, greeting, acknowledgment, or question answerable without external lookups")),
+                    ("search", Some("General web lookups, current facts, sports scores, stock prices, weather")),
+                    ("navigation", Some("Finding places, cafes, coffee shops, driving time, distance, traffic, or directions")),
+                    ("organizing", Some("Adding tasks, calendar events, saving notes, reminders, or scheduling")),
+                ],
+            )
+            .await
+        {
+            match choice.as_str() {
+                "search" if confidence >= 0.70 => return Some("Let me look that up for you."),
+                "navigation" if confidence >= 0.70 => return Some("Checking that for you."),
+                "organizing" if confidence >= 0.70 => return Some("I'll take care of that for you."),
+                _ => {}
+            }
         }
     }
 
@@ -461,14 +486,30 @@ pub async fn detect_action_filler(
 /// the core LLM response if an immediate filler was already played aloud.
 pub fn strip_leading_ack(sentence: &str) -> &str {
     let acks = [
-        "on it.", "on it,", "on it!", "on it",
-        "done.", "done,", "done!", "done",
-        "got it.", "got it,", "got it!", "got it",
-        "sure thing.", "sure thing,", "sure thing!",
-        "sure.", "sure,", "sure!",
-        "certainly.", "certainly,",
-        "right away.", "right away,",
-        "one moment.", "one moment,",
+        "on it.",
+        "on it,",
+        "on it!",
+        "on it",
+        "done.",
+        "done,",
+        "done!",
+        "done",
+        "got it.",
+        "got it,",
+        "got it!",
+        "got it",
+        "sure thing.",
+        "sure thing,",
+        "sure thing!",
+        "sure.",
+        "sure,",
+        "sure!",
+        "certainly.",
+        "certainly,",
+        "right away.",
+        "right away,",
+        "one moment.",
+        "one moment,",
     ];
     let lower = sentence.to_ascii_lowercase();
     for ack in acks {
@@ -484,6 +525,7 @@ pub fn strip_leading_ack(sentence: &str) -> &str {
     sentence
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn stream_response(
     number: u64,
     context: &CallContext,
@@ -517,13 +559,21 @@ async fn stream_response(
     // Fast conversational filler for action/lookup queries to eliminate dead air (<500ms TTFA)
     // Runs filler audio synthesis/playback in parallel with requesting the core LLM stream
     let mut filler_played = false;
-    let (filler_result, text_stream_result) = if let Some(filler) = detect_action_filler(transcript, jev).await {
+    let (filler_result, text_stream_result) = if let Some(filler) =
+        detect_action_filler(transcript, jev).await
+    {
         tracing::info!(
             turn = number,
             filler = %filler,
             "Playing immediate conversational filler for tool / lookup query concurrently with LLM stream"
         );
-        let filler_fut = play_sentence(filler, tts.as_ref(), &output, &mut first_audio_sent_at, &audio_playing);
+        let filler_fut = play_sentence(
+            filler,
+            tts.as_ref(),
+            &output,
+            &mut first_audio_sent_at,
+            &audio_playing,
+        );
         let stream_fut = tokio::time::timeout(
             Duration::from_secs(30),
             agent.respond_stream(context, transcript),
@@ -552,8 +602,8 @@ async fn stream_response(
         filler_played = true;
     }
 
-    let mut text_stream = text_stream_result
-        .map_err(|_| VoiceError::Timeout("agent response"))??;
+    let mut text_stream =
+        text_stream_result.map_err(|_| VoiceError::Timeout("agent response"))??;
 
     while let Some(chunk_result) = tokio::time::timeout(Duration::from_secs(30), text_stream.next())
         .await
@@ -583,7 +633,15 @@ async fn stream_response(
                 first_sentence_at = Some(std::time::Instant::now());
                 first_sentence_text = Some(trimmed.to_string());
             }
-            match play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at, &audio_playing).await {
+            match play_sentence(
+                trimmed,
+                tts.as_ref(),
+                &output,
+                &mut first_audio_sent_at,
+                &audio_playing,
+            )
+            .await
+            {
                 Ok(ttfb) => {
                     if first_tts_ttfb_ms.is_none() {
                         first_tts_ttfb_ms = Some(ttfb);
@@ -608,7 +666,15 @@ async fn stream_response(
                     first_sentence_at = Some(std::time::Instant::now());
                     first_sentence_text = Some(trimmed.to_string());
                 }
-                match play_sentence(trimmed, tts.as_ref(), &output, &mut first_audio_sent_at, &audio_playing).await {
+                match play_sentence(
+                    trimmed,
+                    tts.as_ref(),
+                    &output,
+                    &mut first_audio_sent_at,
+                    &audio_playing,
+                )
+                .await
+                {
                     Ok(ttfb) => {
                         if first_tts_ttfb_ms.is_none() {
                             first_tts_ttfb_ms = Some(ttfb);
@@ -622,10 +688,12 @@ async fn stream_response(
         }
     }
 
-    output
-        .send(CallCommand::Mark(format!("response-{number}")))
-        .await
-        .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+    if first_audio_sent_at.is_some() {
+        output
+            .send(CallCommand::Mark(format!("response-{number}")))
+            .await
+            .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+    }
 
     let all_audio_sent_at = std::time::Instant::now();
 
@@ -689,6 +757,7 @@ async fn play_sentence(
     Ok(ttfb_ms)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn log_turn_latency(
     number: u64,
     context: &CallContext,
@@ -719,19 +788,15 @@ fn log_turn_latency(
             .map(|a| t.transcript_received_at.duration_since(a).as_millis())
     });
 
-    let queue_wait_ms = turn_started_at
-        .duration_since(transcript_rx_at)
-        .as_millis();
+    let queue_wait_ms = turn_started_at.duration_since(transcript_rx_at).as_millis();
 
-    let llm_ttft_ms =
-        first_token_at.map(|ft| ft.duration_since(llm_request_start).as_millis());
-    let llm_ttfs_ms =
-        first_sentence_at.map(|fs| fs.duration_since(llm_request_start).as_millis());
+    let llm_ttft_ms = first_token_at.map(|ft| ft.duration_since(llm_request_start).as_millis());
+    let llm_ttfs_ms = first_sentence_at.map(|fs| fs.duration_since(llm_request_start).as_millis());
     let tts_ttfb_ms = first_tts_ttfb_ms;
 
     // Time from transcript received to first audio dispatched to Twilio (pipeline latency)
-    let time_to_first_audio_ms = first_audio_sent_at
-        .map(|fa| fa.duration_since(transcript_rx_at).as_millis());
+    let time_to_first_audio_ms =
+        first_audio_sent_at.map(|fa| fa.duration_since(transcript_rx_at).as_millis());
 
     // Time from caller stopped speaking to first audio dispatched to Twilio (user perceived delay)
     let user_perceived_delay_ms = timing.as_ref().and_then(|t| {
@@ -739,8 +804,9 @@ fn log_turn_latency(
             .and_then(|la| first_audio_sent_at.map(|fa| fa.duration_since(la).as_millis()))
     });
 
-    let total_turn_duration_ms =
-        all_audio_sent_at.duration_since(transcript_rx_at).as_millis();
+    let total_turn_duration_ms = all_audio_sent_at
+        .duration_since(transcript_rx_at)
+        .as_millis();
 
     // 1. Structured trace log for monitoring and metrics aggregation
     tracing::info!(
@@ -1261,7 +1327,11 @@ mod tests {
     #[tokio::test]
     async fn test_detect_action_filler() {
         assert_eq!(
-            detect_action_filler("Search for the date and opponent of India's next cricket match", None).await,
+            detect_action_filler(
+                "Search for the date and opponent of India's next cricket match",
+                None
+            )
+            .await,
             Some("Let me check that for you.")
         );
         assert_eq!(
@@ -1272,7 +1342,10 @@ mod tests {
             detect_action_filler("Find a special specialty coffee shop in Indiranagar", None).await,
             Some("Checking that for you.")
         );
-        assert_eq!(detect_action_filler("The call just connected. Greet the user.", None).await, None);
+        assert_eq!(
+            detect_action_filler("The call just connected. Greet the user.", None).await,
+            None
+        );
         assert_eq!(detect_action_filler("Nope.", None).await, None);
         assert_eq!(detect_action_filler("My name is Rahul.", None).await, None);
         assert_eq!(detect_action_filler("Cool, thanks.", None).await, None);

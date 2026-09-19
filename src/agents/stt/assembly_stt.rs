@@ -30,11 +30,11 @@ impl AssemblyAiStt {
         let min_turn_silence = std::env::var("ASSEMBLYAI_MIN_TURN_SILENCE")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(250);
+            .unwrap_or(200);
         let max_turn_silence = std::env::var("ASSEMBLYAI_MAX_TURN_SILENCE")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(500);
+            .unwrap_or(400);
 
         Self {
             api_key,

@@ -137,7 +137,9 @@ pub async fn wa_receive(
                                 channel: "whatsapp".into(),
                                 external_identity: from.clone(),
                                 external_conversation_id: format!("whatsapp:{from}"),
-                                initiation_context: profile_name.as_ref().map(|n| format!("whatsapp_name:{n}")),
+                                initiation_context: profile_name
+                                    .as_ref()
+                                    .map(|n| format!("whatsapp_name:{n}")),
                                 voice_signature: None,
                             };
                             if let Ok(reply) = providers.agent.respond(&context, &body).await {
