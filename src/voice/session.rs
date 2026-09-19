@@ -62,7 +62,14 @@ pub async fn run_voice_session(
                 CallEvent::Audio(audio) => {
                     *input_last_audio.lock().unwrap() = Some(std::time::Instant::now());
                     input_speech_accumulator.lock().unwrap().push_frame(&audio);
-                    if vad.process_frame(&audio) == crate::voice::vad::VadEvent::SpeechStarted {
+                    let vad_event = vad.process_frame(&audio);
+                    if vad_event == crate::voice::vad::VadEvent::SpeechStarted {
+                        tracing::info!(
+                            rms = %vad.current_rms(),
+                            threshold = %vad.dynamic_threshold(),
+                            noise_floor = %vad.noise_floor(),
+                            "VAD: Inbound speech onset detected (SpeechStarted)"
+                        );
                         let _ = input_signal.send(SessionSignal::SpeechDetected).await;
                     }
                     if let Err(error) = input_stt.send_audio(audio).await {
@@ -131,10 +138,15 @@ pub async fn run_voice_session(
                 if speech_started_at.is_none() {
                     speech_started_at = Some(std::time::Instant::now());
                 }
+                let is_playing = audio_playing.load(std::sync::atomic::Ordering::SeqCst);
+                let has_active_response = active_response.is_some();
+                tracing::info!(
+                    is_playing,
+                    has_active_response,
+                    "Voice session: VAD SpeechDetected event received"
+                );
                 // Only execute barge-in interruption if the assistant is actively playing audio aloud
-                if active_response.is_some()
-                    && audio_playing.load(std::sync::atomic::Ordering::SeqCst)
-                {
+                if has_active_response && is_playing {
                     tracing::info!(
                         "Local VAD: Voice detected during active playback, executing barge-in interruption"
                     );
@@ -182,6 +194,13 @@ pub async fn run_voice_session(
                 if speech_started_at.is_none() {
                     speech_started_at = Some(std::time::Instant::now());
                 }
+                let is_playing = audio_playing.load(std::sync::atomic::Ordering::SeqCst);
+                let has_active_response = active_response.is_some();
+                tracing::info!(
+                    is_playing,
+                    has_active_response,
+                    "Voice session: STT SpeechStarted event received"
+                );
                 if let Some(task) = active_response.take() {
                     tracing::info!(
                         "STT: Speech started during active response, executing barge-in interruption"
@@ -241,23 +260,28 @@ pub async fn run_voice_session(
                     transcript = format!("{prev} {transcript}");
                 }
 
-                if context.voice_signature.is_none() {
-                    let accumulator = speech_accumulator.clone();
-                    let sig = tokio::task::spawn_blocking(move || {
-                        let mut acc = accumulator.lock().unwrap();
-                        let signature = acc.extract_signature();
-                        acc.clear();
-                        signature
-                    })
-                    .await
-                    .ok()
-                    .flatten();
+                let accumulator = speech_accumulator.clone();
+                let sig = tokio::task::spawn_blocking(move || {
+                    let mut acc = accumulator.lock().unwrap();
+                    let signature = acc.extract_signature();
+                    acc.clear();
+                    signature
+                })
+                .await
+                .ok()
+                .flatten();
 
-                    if let Some(sig) = sig {
-                        context.voice_signature = Some(sig);
-                    }
+                if let Some(sig) = sig {
+                    tracing::info!(
+                        turn = response_number + 1,
+                        "Biometrics: Extracted voice signature for speech turn"
+                    );
+                    context.voice_signature = Some(sig);
                 } else {
-                    speech_accumulator.lock().unwrap().clear();
+                    tracing::debug!(
+                        turn = response_number + 1,
+                        "Biometrics: Insufficient audio for new signature, retaining previous voice signature"
+                    );
                 }
 
                 if active_response.is_some() {

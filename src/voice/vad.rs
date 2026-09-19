@@ -136,6 +136,13 @@ impl VoiceActivityDetector {
             if !self.is_speaking {
                 if self.consecutive_speech_frames >= self.consecutive_onset_required {
                     self.is_speaking = true;
+                    tracing::info!(
+                        rms = %self.last_rms,
+                        threshold = %dynamic_threshold,
+                        noise_floor = %self.noise_floor,
+                        consecutive_frames = self.consecutive_speech_frames,
+                        "VAD: Speech onset detected (SpeechStarted)"
+                    );
                     VadEvent::SpeechStarted
                 } else {
                     VadEvent::Silence
@@ -151,6 +158,11 @@ impl VoiceActivityDetector {
                 if self.silent_frame_count >= self.hangover_frames_required {
                     self.is_speaking = false;
                     self.silent_frame_count = 0;
+                    tracing::debug!(
+                        noise_floor = %self.noise_floor,
+                        hangover_frames = self.hangover_frames_required,
+                        "VAD: Speech hangover elapsed, silence restored (SpeechEnded)"
+                    );
                     VadEvent::SpeechEnded
                 } else {
                     VadEvent::SpeechActive
@@ -179,6 +191,12 @@ impl VoiceActivityDetector {
     #[allow(dead_code)]
     pub fn noise_floor(&self) -> f32 {
         self.noise_floor
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub fn dynamic_threshold(&self) -> f32 {
+        (self.noise_floor * 2.5).max(self.speech_threshold)
     }
 
     #[allow(dead_code)]
