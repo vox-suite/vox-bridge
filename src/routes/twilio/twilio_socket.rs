@@ -38,6 +38,11 @@ pub struct TwilioStartPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TwilioMarkPayload {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "event")]
 pub enum InboundStreamMessage {
     #[serde(rename = "connected")]
@@ -53,7 +58,11 @@ pub enum InboundStreamMessage {
     #[serde(rename = "stop")]
     Stop,
     #[serde(rename = "mark")]
-    Mark,
+    Mark {
+        #[serde(rename = "streamSid")]
+        stream_sid: String,
+        mark: TwilioMarkPayload,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -156,7 +165,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                 }
                 InboundStreamMessage::Start { start } => break start,
                 InboundStreamMessage::Stop => return Ok(()),
-                InboundStreamMessage::Media { .. } | InboundStreamMessage::Mark => {
+                InboundStreamMessage::Media { .. } | InboundStreamMessage::Mark { .. } => {
                     return Err(VoiceError::Protocol(
                         "Twilio media arrived before start".into(),
                     ));
@@ -214,7 +223,13 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                                     .map_err(|_| VoiceError::Protocol("Twilio audio buffer unavailable".into()))?;
                             }
                             InboundStreamMessage::Stop => break Ok(()),
-                            InboundStreamMessage::Mark => {}
+                            InboundStreamMessage::Mark { stream_sid: incoming_sid, mark } => {
+                                if incoming_sid != stream_sid {
+                                    break Err(VoiceError::Protocol("Twilio stream identifier changed".into()));
+                                }
+                                input_tx.try_send(CallEvent::PlaybackFinished(mark.name))
+                                    .map_err(|_| VoiceError::Protocol("Twilio playback buffer unavailable".into()))?;
+                            }
                             InboundStreamMessage::Connected { .. } | InboundStreamMessage::Start { .. } => {
                                 break Err(VoiceError::Protocol("unexpected Twilio stream event".into()));
                             }
@@ -338,6 +353,18 @@ mod tests {
             start.custom_parameters["external_conversation_id"],
             "conversation-1"
         );
+    }
+
+    #[test]
+    fn parses_playback_acknowledgement() {
+        let message =
+            parse_inbound(r#"{"event":"mark","streamSid":"MZ123","mark":{"name":"response-7"}}"#)
+                .unwrap();
+        let InboundStreamMessage::Mark { stream_sid, mark } = message else {
+            panic!("expected mark");
+        };
+        assert_eq!(stream_sid, "MZ123");
+        assert_eq!(mark.name, "response-7");
     }
 
     #[test]
