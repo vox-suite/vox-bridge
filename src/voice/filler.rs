@@ -10,6 +10,7 @@ pub static FILLER_CACHE: LazyLock<DashMap<&'static str, Vec<Bytes>>> = LazyLock:
 
 /// List of all standard static filler phrases used across domains for pre-warming.
 pub const PREWARM_FILLERS: &[&str] = &[
+    "One moment.",
     "On it.",
     "Sure thing, one moment.",
     "Taking care of that right now.",
@@ -65,9 +66,11 @@ pub async fn play_filler(
     audio_playing: &std::sync::atomic::AtomicBool,
 ) -> Result<u128, VoiceError> {
     let start = std::time::Instant::now();
+    let mut playback_until = tokio::time::Instant::now();
 
     // 1. Instant cache hit from memory (0ms TTFA)
-    if let Some(cached_chunks) = FILLER_CACHE.get(phrase) {
+    let cached = FILLER_CACHE.get(phrase).map(|entry| entry.value().clone());
+    if let Some(cached_chunks) = cached {
         let mut ttfb_ms = 0;
         let mut is_first = true;
         for chunk in cached_chunks.iter() {
@@ -75,6 +78,8 @@ pub async fn play_filler(
                 .send(crate::voice::session::CallCommand::Media(chunk.clone()))
                 .await
                 .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+            playback_until = playback_until.max(tokio::time::Instant::now())
+                + std::time::Duration::from_secs_f64(chunk.len() as f64 / 8000.0);
             audio_playing.store(true, std::sync::atomic::Ordering::SeqCst);
             if is_first {
                 ttfb_ms = start.elapsed().as_millis();
@@ -84,6 +89,13 @@ pub async fn play_filler(
                 is_first = false;
             }
         }
+        tokio::time::sleep_until(playback_until).await;
+        audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
+        tracing::info!(
+            cached = true,
+            elapsed_ms = start.elapsed().as_millis(),
+            "FILLER_ESTIMATED_PLAYBACK_FINISHED"
+        );
         return Ok(ttfb_ms);
     }
 
@@ -109,6 +121,8 @@ pub async fn play_filler(
             ))
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+        playback_until = playback_until.max(tokio::time::Instant::now())
+            + std::time::Duration::from_secs_f64(chunk_bytes.len() as f64 / 8000.0);
         audio_playing.store(true, std::sync::atomic::Ordering::SeqCst);
 
         let now = std::time::Instant::now();
@@ -126,6 +140,13 @@ pub async fn play_filler(
         FILLER_CACHE.insert(phrase, collected);
     }
 
+    tokio::time::sleep_until(playback_until).await;
+    audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
+    tracing::info!(
+        cached = false,
+        elapsed_ms = start.elapsed().as_millis(),
+        "FILLER_ESTIMATED_PLAYBACK_FINISHED"
+    );
     Ok(ttfb_ms)
 }
 
@@ -172,6 +193,11 @@ pub async fn detect_action_filler(
         return None;
     }
 
+    if trimmed.contains("book a") || trimmed.contains("booking") || trimmed.contains("reservation")
+    {
+        return Some("One moment.");
+    }
+
     let t = turn as usize;
 
     // 1. Reminders & Tasks
@@ -198,7 +224,6 @@ pub async fn detect_action_filler(
     // 2. Calendar & Scheduling
     if trimmed.contains("schedule")
         || trimmed.contains("reschedule")
-        || trimmed.contains("book a")
         || trimmed.contains("set up a meeting")
         || trimmed.contains("put on my calendar")
         || trimmed.contains("calendar")
@@ -476,6 +501,22 @@ pub fn strip_leading_ack(sentence: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn booking_filler_does_not_claim_calendar_access_or_action() {
+        for prompt in [
+            "Can you book a restaurant booking?",
+            "Which booking have you done?",
+            "Book a flight",
+        ] {
+            for turn in 0..3 {
+                assert_eq!(
+                    detect_action_filler(prompt, None, turn).await,
+                    Some("One moment.")
+                );
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_task_fillers_by_domain() {

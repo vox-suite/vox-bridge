@@ -115,7 +115,8 @@ impl AgentProvider for CoreAgentClient {
 
         match send_result {
             Ok(response) if response.status().is_success() => {
-                tracing::debug!(
+                tracing::info!(
+                    conversation_id = %context.external_conversation_id,
                     endpoint = %stream_endpoint,
                     connect_time_ms = start_time.elapsed().as_millis(),
                     "CoreAgentClient: Stream connection established"

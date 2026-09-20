@@ -112,12 +112,9 @@ pub async fn run_voice_session(
     let mut speech_started_at: Option<std::time::Instant> = None;
     let mut failure = None;
     let audio_playing = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut current_active_prompt: Option<String> = None;
-    let mut interrupted_prompt_buffer: Option<String> = None;
 
     if let Some(ref opening) = context.initiation_context {
         response_number += 1;
-        current_active_prompt = Some(opening.clone());
         active_response = Some(spawn_response(
             response_number,
             context.clone(),
@@ -157,24 +154,16 @@ pub async fn run_voice_session(
                             .await
                             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
 
-                        let was_speaking =
-                            audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
-                        if let Some(interrupted) = current_active_prompt.take() {
-                            if !was_speaking && !interrupted.starts_with("The call just connected")
-                            {
-                                interrupted_prompt_buffer =
-                                    Some(match interrupted_prompt_buffer.take() {
-                                        Some(prev) => format!("{prev} {interrupted}"),
-                                        None => interrupted,
-                                    });
-                            } else {
-                                interrupted_prompt_buffer = None;
-                            }
-                        }
+                        audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
+                        tracing::info!(
+                            turn = response_number,
+                            conversation_id = %context.external_conversation_id,
+                            source = "vad",
+                            "VOICE_RESPONSE_INTERRUPTED"
+                        );
                     }
                     if let Some((transcript, timing)) = pending_transcripts.pop_front() {
                         response_number += 1;
-                        current_active_prompt = Some(transcript.clone());
                         active_response = Some(spawn_response(
                             response_number,
                             context.clone(),
@@ -201,7 +190,7 @@ pub async fn run_voice_session(
                     has_active_response,
                     "Voice session: STT SpeechStarted event received"
                 );
-                if let Some(task) = active_response.take() {
+                if is_playing && let Some(task) = active_response.take() {
                     tracing::info!(
                         "STT: Speech started during active response, executing barge-in interruption"
                     );
@@ -211,23 +200,23 @@ pub async fn run_voice_session(
                         .await
                         .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
 
-                    let was_speaking =
-                        audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
-                    if let Some(interrupted) = current_active_prompt.take() {
-                        if !was_speaking && !interrupted.starts_with("The call just connected") {
-                            interrupted_prompt_buffer =
-                                Some(match interrupted_prompt_buffer.take() {
-                                    Some(prev) => format!("{prev} {interrupted}"),
-                                    None => interrupted,
-                                });
-                        } else {
-                            interrupted_prompt_buffer = None;
-                        }
-                    }
+                    audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
+                    tracing::info!(
+                        turn = response_number,
+                        conversation_id = %context.external_conversation_id,
+                        source = "stt",
+                        "VOICE_RESPONSE_INTERRUPTED"
+                    );
+                } else if has_active_response {
+                    tracing::info!(
+                        turn = response_number,
+                        "Speech detected while response pending; keeping request active"
+                    );
                 }
-                if let Some((transcript, timing)) = pending_transcripts.pop_front() {
+                if active_response.is_none()
+                    && let Some((transcript, timing)) = pending_transcripts.pop_front()
+                {
                     response_number += 1;
-                    current_active_prompt = Some(transcript.clone());
                     active_response = Some(spawn_response(
                         response_number,
                         context.clone(),
@@ -242,7 +231,7 @@ pub async fn run_voice_session(
                     ));
                 }
             }
-            SessionSignal::Stt(SttEvent::FinalTranscript(mut transcript)) => {
+            SessionSignal::Stt(SttEvent::FinalTranscript(transcript)) => {
                 let now = std::time::Instant::now();
                 let last_audio = last_audio_at.lock().unwrap().take();
                 let timing = TurnTiming {
@@ -250,15 +239,6 @@ pub async fn run_voice_session(
                     last_audio_at: last_audio,
                     transcript_received_at: now,
                 };
-
-                if let Some(prev) = interrupted_prompt_buffer.take() {
-                    tracing::info!(
-                        prev = %prev,
-                        continuation = %transcript,
-                        "Stitching fragmented speech turns from interrupted utterance"
-                    );
-                    transcript = format!("{prev} {transcript}");
-                }
 
                 let accumulator = speech_accumulator.clone();
                 let sig = tokio::task::spawn_blocking(move || {
@@ -286,9 +266,14 @@ pub async fn run_voice_session(
 
                 if active_response.is_some() {
                     pending_transcripts.push_back((transcript, timing));
+                    tracing::info!(
+                        turn = response_number,
+                        conversation_id = %context.external_conversation_id,
+                        queued_turns = pending_transcripts.len(),
+                        "VOICE_TRANSCRIPT_QUEUED"
+                    );
                 } else {
                     response_number += 1;
-                    current_active_prompt = Some(transcript.clone());
                     active_response = Some(spawn_response(
                         response_number,
                         context.clone(),
@@ -306,12 +291,9 @@ pub async fn run_voice_session(
             SessionSignal::ResponseFinished(number) => {
                 if number == response_number {
                     active_response.take();
-                    current_active_prompt = None;
-                    interrupted_prompt_buffer = None;
                     audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
                     if let Some((transcript, timing)) = pending_transcripts.pop_front() {
                         response_number += 1;
-                        current_active_prompt = Some(transcript.clone());
                         active_response = Some(spawn_response(
                             response_number,
                             context.clone(),
@@ -349,6 +331,19 @@ pub async fn run_voice_session(
     finish_result
 }
 
+struct ResponseLifecycle {
+    number: u64,
+    conversation_id: String,
+    started: std::time::Instant,
+    outcome: &'static str,
+}
+
+impl Drop for ResponseLifecycle {
+    fn drop(&mut self) {
+        tracing::info!(turn = self.number, conversation_id = %self.conversation_id, outcome = self.outcome, elapsed_ms = self.started.elapsed().as_millis(), "VOICE_RESPONSE_ENDED");
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_response(
     number: u64,
@@ -363,6 +358,12 @@ fn spawn_response(
     audio_playing: Arc<std::sync::atomic::AtomicBool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let mut lifecycle = ResponseLifecycle {
+            number,
+            conversation_id: context.external_conversation_id.clone(),
+            started: std::time::Instant::now(),
+            outcome: "cancelled",
+        };
         let result = stream_response(
             number,
             &context,
@@ -375,6 +376,11 @@ fn spawn_response(
             audio_playing.clone(),
         )
         .await;
+        lifecycle.outcome = if result.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        };
         audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
         if let Err(error) = result {
             tracing::warn!(provider_error = %error, "voice response failed");
@@ -890,6 +896,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn filler_finishes_playback_before_waiting_for_core() {
+        let (_, _, _, _, tts) = providers();
+        let (output, _receiver) = mpsc::channel(8);
+        for _ in 0..2 {
+            let playing = AtomicBool::new(false);
+            let mut first_audio = None;
+            play_filler(
+                "Test filler playback.",
+                tts.as_ref(),
+                &output,
+                &mut first_audio,
+                &playing,
+            )
+            .await
+            .unwrap();
+            assert!(first_audio.is_some());
+            assert!(
+                !playing.load(Ordering::SeqCst),
+                "finished filler must not mark a pending Core request as speaking"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn turns_call_audio_into_marked_response_audio() {
         let (providers, event_tx, stt, agent, tts) = providers();
         let (input_tx, input_rx) = mpsc::channel(8);
@@ -1026,52 +1056,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn speech_interrupted_before_playback_stitches_fragments() {
-        let (providers, event_tx, _, agent, tts) = providers();
-        tts.pending.store(true, Ordering::SeqCst);
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let (output_tx, mut output_rx) = mpsc::channel(8);
-        let session = tokio::spawn(run_voice_session(
-            providers,
-            call_context(),
-            input_rx,
-            output_tx,
-        ));
-        // First fragment emitted
-        event_tx
-            .send(SttEvent::FinalTranscript("Can you".into()))
-            .await
-            .unwrap();
-
-        // User immediately continues speaking before any audio is sent
-        event_tx.send(SttEvent::SpeechStarted).await.unwrap();
-        let clear = tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv())
-            .await
-            .unwrap();
-        assert_eq!(clear, Some(CallCommand::Clear));
-
-        tts.pending.store(false, Ordering::SeqCst);
-        // Second fragment emitted
-        event_tx
-            .send(SttEvent::FinalTranscript("remind me of chess".into()))
-            .await
-            .unwrap();
-
-        for _ in 0..3 {
-            output_rx.recv().await.unwrap();
-        }
-        input_tx.send(CallEvent::Stop).await.unwrap();
-        session.await.unwrap().unwrap();
-
-        // Verify the two fragments were stitched into one coherent prompt!
-        assert_eq!(
-            agent.transcripts.lock().await.as_slice(),
-            &["Can you remind me of chess"]
-        );
-    }
-
-    #[tokio::test]
-    async fn finalized_turns_are_processed_serially() {
+    async fn speech_during_pending_response_preserves_request_and_queues_distinct_turns() {
         let (providers, event_tx, _, agent, _) = providers();
         let gate = Arc::new(Notify::new());
         *agent.first_gate.lock().await = Some(gate.clone());
@@ -1091,6 +1076,8 @@ mod tests {
         while agent.transcripts.lock().await.is_empty() {
             tokio::task::yield_now().await;
         }
+        event_tx.send(SttEvent::SpeechStarted).await.unwrap();
+        event_tx.send(SttEvent::SpeechStarted).await.unwrap();
         event_tx
             .send(SttEvent::FinalTranscript("second".into()))
             .await
@@ -1098,6 +1085,10 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(agent.transcripts.lock().await.as_slice(), &["first"]);
 
+        assert!(
+            output_rx.try_recv().is_err(),
+            "pending response must not be cleared"
+        );
         gate.notify_one();
         for _ in 0..6 {
             output_rx.recv().await.unwrap();
