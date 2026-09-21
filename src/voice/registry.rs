@@ -113,10 +113,7 @@ impl VoiceRuntime {
                     .secrets
                     .elevenlabs_api_key
                     .ok_or_else(|| VoiceError::Configuration("ELEVENLABS_API_KEY is missing".into()))?;
-                let endpoint = config
-                    .secrets
-                    .elevenlabs_base_url
-                    .unwrap_or_else(|| "https://api.elevenlabs.io".into());
+                let endpoint = "https://api.elevenlabs.io".to_string();
                 Arc::new(ElevenLabsTts::new(
                     http,
                     api_key,

@@ -40,7 +40,6 @@ pub(crate) struct VoiceSecrets {
     pub core_service_token: String,
     pub sarvam_api_key: Option<String>,
     pub elevenlabs_api_key: Option<String>,
-    pub elevenlabs_base_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -66,7 +65,6 @@ impl VoiceConfig {
             "ELEVENLABS_API_KEY",
             "ELEVENLABS_MODEL_ID",
             "ELEVENLABS_VOICE_ID",
-            "ELEVENLABS_BASE_URL",
         ]
         .into_iter()
         .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
@@ -166,7 +164,6 @@ impl VoiceConfig {
                 core_service_token,
                 sarvam_api_key,
                 elevenlabs_api_key,
-                elevenlabs_base_url: get("ELEVENLABS_BASE_URL").filter(|v| !v.trim().is_empty()),
             },
         })
     }
@@ -315,7 +312,6 @@ mod tests {
         values.insert("ELEVENLABS_API_KEY".into(), "custom-xi-key".into());
         values.insert("ELEVENLABS_MODEL_ID".into(), "eleven_multilingual_v2".into());
         values.insert("ELEVENLABS_VOICE_ID".into(), "custom-voice-id".into());
-        values.insert("ELEVENLABS_BASE_URL".into(), "https://custom.elevenlabs.io".into());
 
         let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
 
@@ -326,10 +322,7 @@ mod tests {
             config.secrets.elevenlabs_api_key.as_deref(),
             Some("custom-xi-key")
         );
-        assert_eq!(
-            config.secrets.elevenlabs_base_url.as_deref(),
-            Some("https://custom.elevenlabs.io")
-        );
+
     }
 
     #[test]
