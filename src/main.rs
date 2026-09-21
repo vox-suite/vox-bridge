@@ -39,7 +39,6 @@ async fn main() {
         Arc::new(DashMap::new());
     let voice_config = crate::voice::config::VoiceConfig::from_env()
         .expect("voice provider configuration is invalid");
-    let service_token = voice_config.secrets.core_service_token.clone();
     let core_url = voice_config.secrets.core_url.clone();
     let voice = Arc::new(
         crate::voice::registry::VoiceRuntime::from_config(voice_config)
@@ -77,7 +76,7 @@ async fn main() {
         twilio_account_sid: Arc::new(twilio_account_sid),
         twilio_auth_token: Arc::new(twilio_auth_token),
         twilio_from_number: Arc::new(twilio_from_number),
-        service_token: Arc::new(service_token),
+        service_token: Arc::new(String::new()),
         core_url: Arc::new(core_url.clone()),
         telephony,
         voice,

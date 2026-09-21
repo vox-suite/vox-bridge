@@ -9,3 +9,11 @@ pub struct CallContext {
     pub voice_signature: Option<String>,
     pub tts_provider: Option<String>,
 }
+
+pub fn normalized_e164(value: &str) -> Option<String> {
+    let digits: String = value.chars().filter(char::is_ascii_digit).collect();
+    if !(7..=15).contains(&digits.len()) {
+        return None;
+    }
+    Some(format!("+{digits}"))
+}

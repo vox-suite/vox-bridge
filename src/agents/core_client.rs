@@ -5,35 +5,29 @@ use crate::voice::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt, stream};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::time::Duration;
+use uuid::Uuid;
+
+type HmacSha256 = Hmac<Sha256>;
 
 pub struct CoreAgentClient {
     client: reqwest::Client,
     base_url: String,
     endpoint: String,
-    service_token: String,
+    host_credential_id: Uuid,
+    host_audience: String,
+    host_secret: String,
     tts_provider: Option<String>,
 }
 
 #[derive(Serialize)]
-struct RespondRequest<'a> {
-    identity: Identity<'a>,
-    external_conversation_id: &'a str,
-    text: &'a str,
-    initiation_context: Option<&'a str>,
+struct HostContext<'a> {
+    host_user_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    voice_signature: Option<&'a str>,
-    turn_id: Option<&'a str>,
-    revision: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tts_provider: Option<&'a str>,
-}
-
-#[derive(Serialize)]
-struct Identity<'a> {
-    channel: &'a str,
-    external_id: &'a str,
+    organization_external_key: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -42,7 +36,12 @@ struct RespondResponse {
 }
 
 impl CoreAgentClient {
-    pub fn new(base_url: String, service_token: String) -> Result<Self, VoiceError> {
+    pub fn new(
+        base_url: String,
+        host_credential_id: String,
+        host_audience: String,
+        host_secret: String,
+    ) -> Result<Self, VoiceError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .tcp_nodelay(true)
@@ -52,11 +51,20 @@ impl CoreAgentClient {
             .build()
             .map_err(|_| configuration("Core HTTP client creation failed"))?;
         let trimmed = base_url.trim_end_matches('/').to_owned();
+        let host_credential_id = Uuid::parse_str(host_credential_id.trim())
+            .map_err(|_| configuration("VOX_CORE_HOST_CREDENTIAL_ID is invalid"))?;
+        if host_audience.trim().is_empty() || host_secret.trim().is_empty() {
+            return Err(configuration(
+                "Core host credential configuration is missing",
+            ));
+        }
         Ok(Self {
             client,
             endpoint: format!("{trimmed}/v1/conversations/respond"),
             base_url: trimmed,
-            service_token,
+            host_credential_id,
+            host_audience,
+            host_secret,
             tts_provider: None,
         })
     }
@@ -65,31 +73,67 @@ impl CoreAgentClient {
         self.tts_provider = Some(provider.into());
         self
     }
+
+    fn host_context(&self, context: &CallContext) -> HostContext<'_> {
+        let normalized_phone = crate::voice::context::normalized_e164(&context.external_identity)
+            .unwrap_or_else(|| context.external_identity.clone());
+        HostContext {
+            // Channel-prefixed contexts intentionally prevent implicit cross-channel linking.
+            host_user_id: format!("{}:{normalized_phone}", context.channel),
+            organization_external_key: None,
+        }
+    }
+
+    fn signed_request(
+        &self,
+        request: reqwest::RequestBuilder,
+        context: &CallContext,
+    ) -> Result<reqwest::RequestBuilder, VoiceError> {
+        let issued_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| configuration("system clock is before Unix epoch"))?
+            .as_secs() as i64;
+        let nonce = Uuid::new_v4();
+        let host_context = self.host_context(context);
+        let canonical = canonical_assertion(
+            self.host_credential_id,
+            &self.host_audience,
+            issued_at,
+            nonce,
+            &host_context.host_user_id,
+        );
+        let mut signer = HmacSha256::new_from_slice(self.host_secret.as_bytes())
+            .map_err(|_| configuration("Core host credential is invalid"))?;
+        signer.update(canonical.as_bytes());
+        let signature = hex::encode(signer.finalize().into_bytes());
+        Ok(request
+            .header("X-Vox-Host-Credential", self.host_credential_id.to_string())
+            .header("X-Vox-Host-Audience", &self.host_audience)
+            .header("X-Vox-Host-Timestamp", issued_at.to_string())
+            .header("X-Vox-Host-Nonce", nonce.to_string())
+            .header("X-Vox-Host-Signature", signature)
+            // Existing Core host trust verifies this over TLS and never logs it.
+            .header("X-Vox-Host-Secret", &self.host_secret))
+    }
 }
 
 #[async_trait]
 impl AgentProvider for CoreAgentClient {
     async fn respond(&self, context: &CallContext, transcript: &str) -> Result<String, VoiceError> {
+        let host_context = self.host_context(context);
         let response = self
-            .client
-            .post(&self.endpoint)
-            .bearer_auth(&self.service_token)
-            .json(&RespondRequest {
-                identity: Identity {
-                    channel: &context.channel,
-                    external_id: &context.external_identity,
-                },
-                external_conversation_id: &context.external_conversation_id,
-                text: transcript,
-                initiation_context: context.initiation_context.as_deref(),
-                voice_signature: context.voice_signature.as_deref(),
-                turn_id: context.turn_id.as_deref(),
-                revision: context.revision,
-                tts_provider: context
-                    .tts_provider
-                    .as_deref()
-                    .or(self.tts_provider.as_deref()),
-            })
+            .signed_request(self.client.post(&self.endpoint), context)?
+            .json(&serde_json::json!({
+                "host_context": host_context,
+                "identity": {"channel": context.channel, "external_id": context.external_identity},
+                "external_conversation_id": context.external_conversation_id,
+                "text": transcript,
+                "initiation_context": context.initiation_context,
+                "voice_signature": context.voice_signature,
+                "turn_id": context.turn_id,
+                "revision": context.revision,
+                "tts_provider": context.tts_provider.as_deref().or(self.tts_provider.as_deref()),
+            }))
             .send()
             .await
             .map_err(|_| provider_error("Core request failed"))?;
@@ -109,30 +153,22 @@ impl AgentProvider for CoreAgentClient {
         transcript: &str,
     ) -> Result<AgentEventStream, VoiceError> {
         let stream_endpoint = format!("{}/v1/conversations/respond/stream", self.base_url);
-        let request = RespondRequest {
-            identity: Identity {
-                channel: &context.channel,
-                external_id: &context.external_identity,
-            },
-            external_conversation_id: &context.external_conversation_id,
-            text: transcript,
-            initiation_context: context.initiation_context.as_deref(),
-            voice_signature: context.voice_signature.as_deref(),
-            turn_id: context.turn_id.as_deref(),
-            revision: context.revision,
-            tts_provider: context
-                .tts_provider
-                .as_deref()
-                .or(self.tts_provider.as_deref()),
-        };
-
         let start_time = std::time::Instant::now();
+        let host_context = self.host_context(context);
         let send_result = self
-            .client
-            .post(&stream_endpoint)
-            .bearer_auth(&self.service_token)
+            .signed_request(self.client.post(&stream_endpoint), context)?
             .header("Accept", "text/event-stream")
-            .json(&request)
+            .json(&serde_json::json!({
+                "host_context": host_context,
+                "identity": {"channel": context.channel, "external_id": context.external_identity},
+                "external_conversation_id": context.external_conversation_id,
+                "text": transcript,
+                "initiation_context": context.initiation_context,
+                "voice_signature": context.voice_signature,
+                "turn_id": context.turn_id,
+                "revision": context.revision,
+                "tts_provider": context.tts_provider.as_deref().or(self.tts_provider.as_deref()),
+            }))
             .send()
             .await;
 
@@ -184,12 +220,16 @@ impl AgentProvider for CoreAgentClient {
     }
 
     async fn speculate(&self, context: &CallContext, transcript: &str) -> Result<(), VoiceError> {
+        let host_context = self.host_context(context);
         let response = self
-            .client
-            .post(format!("{}/v1/conversations/speculate", self.base_url))
-            .bearer_auth(&self.service_token)
+            .signed_request(
+                self.client
+                    .post(format!("{}/v1/conversations/speculate", self.base_url)),
+                context,
+            )?
             .timeout(Duration::from_secs(6))
             .json(&serde_json::json!({
+                "host_context": host_context,
                 "identity": {"channel": context.channel, "external_id": context.external_identity},
                 "external_conversation_id": context.external_conversation_id,
                 "text": transcript, "turn_id": context.turn_id, "revision": context.revision,
@@ -206,11 +246,11 @@ impl AgentProvider for CoreAgentClient {
 
     async fn complete(&self, context: &CallContext) -> Result<(), VoiceError> {
         let endpoint = format!("{}/v1/conversations/complete", self.base_url);
+        let host_context = self.host_context(context);
         let response = self
-            .client
-            .post(&endpoint)
-            .bearer_auth(&self.service_token)
+            .signed_request(self.client.post(&endpoint), context)?
             .json(&serde_json::json!({
+                "host_context": host_context,
                 "identity": {
                     "channel": &context.channel,
                     "external_id": &context.external_identity,
@@ -225,6 +265,30 @@ impl AgentProvider for CoreAgentClient {
         }
         Ok(())
     }
+}
+
+fn canonical_assertion(
+    credential_id: Uuid,
+    audience: &str,
+    issued_at: i64,
+    nonce: Uuid,
+    host_user_id: &str,
+) -> String {
+    let mut canonical = String::from("vox-host-assertion-v1");
+    for field in [
+        credential_id.to_string(),
+        audience.to_owned(),
+        issued_at.to_string(),
+        nonce.to_string(),
+        host_user_id.to_owned(),
+        String::new(),
+    ] {
+        canonical.push('|');
+        canonical.push_str(&field.len().to_string());
+        canonical.push(':');
+        canonical.push_str(&field);
+    }
+    canonical
 }
 
 fn parse_sse_stream<S>(bytes_stream: S) -> impl Stream<Item = Result<AgentEvent, VoiceError>>

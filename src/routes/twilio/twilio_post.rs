@@ -77,6 +77,11 @@ pub async fn initialize_voice_socket(
         return (StatusCode::FORBIDDEN, "Invalid Twilio signature").into_response();
     }
 
+    let Some(from) = crate::voice::context::normalized_e164(&params.from) else {
+        tracing::warn!("rejected Twilio webhook with malformed caller identity");
+        return (StatusCode::BAD_REQUEST, "Invalid caller identity").into_response();
+    };
+
     let call_sid = params.call_sid.clone();
     let external_conversation_id = params.call_sid.clone();
     app_state.twilio.insert(
@@ -84,7 +89,7 @@ pub async fn initialize_voice_socket(
         TwilioState {
             call_sid: params.call_sid,
             account_sid: params.account_sid,
-            from: params.from,
+            from,
             to: params.to,
             call_status: params.call_status,
             opening_instruction: Some("The call just connected. Greet the user.".into()),
@@ -176,9 +181,14 @@ mod tests {
             ("ASSEMBLYAI_API_KEY".to_owned(), "assembly-key".to_owned()),
             ("VOX_CORE_URL".to_owned(), "http://core-api:3001".to_owned()),
             (
-                "VOX_CORE_SERVICE_TOKEN".to_owned(),
-                "service-token".to_owned(),
+                "VOX_CORE_HOST_CREDENTIAL_ID".to_owned(),
+                "f7f90d3d-5ded-4acf-850f-650bcb965fd1".to_owned(),
             ),
+            (
+                "VOX_CORE_HOST_AUDIENCE".to_owned(),
+                "vox-host:development:bridge".to_owned(),
+            ),
+            ("VOX_CORE_HOST_SECRET".to_owned(), "host-secret".to_owned()),
             ("ELEVENLABS_API_KEY".to_owned(), "eleven-key".to_owned()),
         ]);
         let voice_config =
