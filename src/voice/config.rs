@@ -64,11 +64,8 @@ impl VoiceConfig {
             "SARVAM_SPEAKER",
             "SARVAM_TTS_PACE",
             "ELEVENLABS_API_KEY",
-            "XI_API_KEY",
             "ELEVENLABS_MODEL_ID",
-            "ELEVENLABS_TTS_MODEL",
             "ELEVENLABS_VOICE_ID",
-            "ELEVENLABS_SPEAKER",
             "ELEVENLABS_BASE_URL",
         ]
         .into_iter()
@@ -118,23 +115,19 @@ impl VoiceConfig {
                         value_or(&get, "SARVAM_LANGUAGE_CODE", "en-IN"),
                         Some(sarvam_api_key),
                         get("ELEVENLABS_API_KEY")
-                            .or_else(|| get("XI_API_KEY"))
                             .filter(|v| !v.trim().is_empty()),
                     )
                 }
                 "elevenlabs" => {
                     let elevenlabs_api_key = get("ELEVENLABS_API_KEY")
-                        .or_else(|| get("XI_API_KEY"))
                         .filter(|v| !v.trim().is_empty())
                         .ok_or_else(|| {
                             VoiceError::Configuration("ELEVENLABS_API_KEY is missing".into())
                         })?;
                     let tts_model = get("ELEVENLABS_MODEL_ID")
-                        .or_else(|| get("ELEVENLABS_TTS_MODEL"))
                         .filter(|v| !v.trim().is_empty())
                         .unwrap_or_else(|| "eleven_flash_v2_5".to_string());
                     let speaker = get("ELEVENLABS_VOICE_ID")
-                        .or_else(|| get("ELEVENLABS_SPEAKER"))
                         .filter(|v| !v.trim().is_empty())
                         .unwrap_or_else(|| "21m00Tcm4TlvDq8ikWAM".to_string());
                     (
@@ -318,9 +311,8 @@ mod tests {
     #[test]
     fn configures_custom_elevenlabs_settings() {
         let mut values = valid_values();
-        values.remove("ELEVENLABS_API_KEY");
         values.insert("VOX_TTS_PROVIDER".into(), "elevenlabs".into());
-        values.insert("XI_API_KEY".into(), "custom-xi-key".into());
+        values.insert("ELEVENLABS_API_KEY".into(), "custom-xi-key".into());
         values.insert("ELEVENLABS_MODEL_ID".into(), "eleven_multilingual_v2".into());
         values.insert("ELEVENLABS_VOICE_ID".into(), "custom-voice-id".into());
         values.insert("ELEVENLABS_BASE_URL".into(), "https://custom.elevenlabs.io".into());

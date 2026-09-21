@@ -88,7 +88,6 @@ impl Default for VoiceActivityDetector {
 impl VoiceActivityDetector {
     pub fn new() -> Self {
         let threshold = std::env::var("VOX_VAD_THRESHOLD")
-            .or_else(|_| std::env::var("VAD_THRESHOLD"))
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
             .unwrap_or(650.0);
