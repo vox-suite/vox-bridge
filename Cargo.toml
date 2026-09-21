@@ -27,6 +27,8 @@ async-trait = "0.1"
 bytes = "1"
 thiserror = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries", "copy-dylibs"] }
+rustfft = "6.4.1"
 
 # musl build only: compile OpenSSL from source so native-tls links statically
 # (mac uses Security.framework, so this is skipped locally)

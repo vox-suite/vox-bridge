@@ -1,334 +1,160 @@
-#![allow(clippy::needless_range_loop)]
-use crate::voice::vad::mulaw_to_linear;
-use std::f32::consts::PI;
+use crate::voice::vad::{calculate_rms, mulaw_to_linear};
+use ort::{session::Session, value::Tensor};
+use rustfft::{Fft, FftPlanner, num_complex::Complex};
+use sha2::{Digest, Sha256};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
-pub const DEFAULT_TARGET_SAMPLE_RATE: usize = 16000;
-pub const FBANK_NUM_BINS: usize = 80;
-pub const EMBEDDING_DIM: usize = 192;
-pub const WINDOW_SIZE_SAMPLES: usize = 400; // 25ms at 16kHz
-pub const HOP_SIZE_SAMPLES: usize = 160; // 10ms at 16kHz
-pub const FFT_SIZE: usize = 512;
+const MIN_SAMPLES: usize = 8000;
+const MAX_SAMPLES: usize = 8000 * 5;
+const FFT_SIZE: usize = 512;
+const BINS: usize = 80;
 
-/// Converts incoming 8kHz G.711 μ-law bytes into a 16kHz linear float waveform in [-1.0, 1.0].
-pub fn mulaw_8k_to_linear_16k(mulaw_bytes: &[u8]) -> Vec<f32> {
-    if mulaw_bytes.is_empty() {
-        return Vec::new();
-    }
-
-    let mut linear_8k: Vec<f32> = mulaw_bytes
-        .iter()
-        .map(|&b| mulaw_to_linear(b) as f32 / 32768.0)
-        .collect();
-
-    // DC removal
-    let mean: f32 = linear_8k.iter().sum::<f32>() / linear_8k.len() as f32;
-    for s in &mut linear_8k {
-        *s -= mean;
-    }
-
-    // 2x linear interpolation from 8kHz to 16kHz
-    let mut linear_16k = Vec::with_capacity(linear_8k.len() * 2);
-    for i in 0..linear_8k.len() {
-        let curr = linear_8k[i];
-        linear_16k.push(curr);
-        let next = if i + 1 < linear_8k.len() {
-            linear_8k[i + 1]
-        } else {
-            curr
-        };
-        linear_16k.push((curr + next) * 0.5);
-    }
-
-    // Pre-emphasis filter: y[t] = x[t] - 0.97 * x[t-1]
-    let mut filtered = Vec::with_capacity(linear_16k.len());
-    let mut prev = 0.0f32;
-    for &sample in &linear_16k {
-        filtered.push(sample - 0.97 * prev);
-        prev = sample;
-    }
-
-    filtered
-}
-
-/// Converts Hz to Mel scale.
-#[inline]
-pub fn hz_to_mel(hz: f32) -> f32 {
-    2595.0 * (1.0 + hz / 700.0).log10()
-}
-
-/// Converts Mel scale to Hz.
-#[inline]
-pub fn mel_to_hz(mel: f32) -> f32 {
-    700.0 * (10.0f32.powf(mel / 2595.0) - 1.0)
-}
-
-/// Constructs an 80-channel Mel filterbank matrix for FFT size 512 at 16kHz.
-pub fn build_mel_filterbank(num_bins: usize, fft_size: usize, sample_rate: usize) -> Vec<Vec<f32>> {
-    let num_fft_bins = fft_size / 2 + 1;
-    let min_mel = hz_to_mel(20.0);
-    let max_mel = hz_to_mel((sample_rate / 2) as f32);
-    let mel_step = (max_mel - min_mel) / (num_bins + 1) as f32;
-
-    let mut filterbank = vec![vec![0.0f32; num_fft_bins]; num_bins];
-    let fft_freq_step = sample_rate as f32 / fft_size as f32;
-
-    for i in 0..num_bins {
-        let left_mel = min_mel + i as f32 * mel_step;
-        let center_mel = min_mel + (i + 1) as f32 * mel_step;
-        let right_mel = min_mel + (i + 2) as f32 * mel_step;
-
-        let left_hz = mel_to_hz(left_mel);
-        let center_hz = mel_to_hz(center_mel);
-        let right_hz = mel_to_hz(right_mel);
-
-        for k in 0..num_fft_bins {
-            let freq = k as f32 * fft_freq_step;
-            if freq >= left_hz && freq <= center_hz && (center_hz - left_hz) > 0.0 {
-                filterbank[i][k] = (freq - left_hz) / (center_hz - left_hz);
-            } else if freq > center_hz && freq <= right_hz && (right_hz - center_hz) > 0.0 {
-                filterbank[i][k] = (right_hz - freq) / (right_hz - center_hz);
-            }
-        }
-    }
-
-    filterbank
-}
-
-/// Computes power spectrum for a 400-sample window using a Hamming window and 512-point real DFT.
-pub fn compute_window_power_spectrum(
-    samples: &[f32],
-    window_size: usize,
-    fft_size: usize,
-) -> Vec<f32> {
-    let num_bins = fft_size / 2 + 1;
-    let mut power = vec![0.0f32; num_bins];
-
-    // Precompute windowed samples once per frame (eliminating N * num_bins redundant hamming calculations)
-    let mut windowed = Vec::with_capacity(window_size);
-    let n_denom = (window_size - 1) as f32;
-    for n in 0..window_size {
-        if n < samples.len() {
-            let hamming = 0.54 - 0.46 * (2.0 * PI * n as f32 / n_denom).cos();
-            windowed.push(samples[n] * hamming);
-        } else {
-            windowed.push(0.0);
-        }
-    }
-
-    for k in 0..num_bins {
-        let mut real = 0.0f32;
-        let mut imag = 0.0f32;
-        let angle_step = 2.0 * PI * k as f32 / fft_size as f32;
-
-        for (n, &val) in windowed.iter().enumerate() {
-            if val != 0.0 {
-                let angle = angle_step * n as f32;
-                real += val * angle.cos();
-                imag += val * angle.sin();
-            }
-        }
-        power[k] = real * real + imag * imag;
-    }
-
-    power
-}
-
-/// Extracts Log-Mel filterbank energies: [num_frames, 80].
-pub fn compute_fbank(waveform_16k: &[f32], filterbank: &[Vec<f32>]) -> Vec<Vec<f32>> {
-    if waveform_16k.len() < WINDOW_SIZE_SAMPLES {
-        return Vec::new();
-    }
-
-    let mut frames = Vec::new();
-    let num_frames = (waveform_16k.len() - WINDOW_SIZE_SAMPLES) / HOP_SIZE_SAMPLES + 1;
-
-    for i in 0..num_frames {
-        let start = i * HOP_SIZE_SAMPLES;
-        let end = start + WINDOW_SIZE_SAMPLES;
-        let window = &waveform_16k[start..end];
-        let power_spec = compute_window_power_spectrum(window, WINDOW_SIZE_SAMPLES, FFT_SIZE);
-
-        let mut fbank_energies = Vec::with_capacity(FBANK_NUM_BINS);
-        for filter in filterbank {
-            let mut energy = 0.0f32;
-            for (p, &f) in power_spec.iter().zip(filter.iter()) {
-                energy += p * f;
-            }
-            // Log compression with small epsilon to prevent log(0)
-            fbank_energies.push((energy + 1e-6).ln());
-        }
-        frames.push(fbank_energies);
-    }
-
-    frames
-}
-
-/// Computes a normalized 192-dimensional acoustic embedding vector from Log-Mel filterbank frames.
-///
-/// If an ONNX model (e.g. CAM++ or ECAPA-TDNN) is configured, this tensor is passed to the ONNX session.
-/// Otherwise, statistical temporal pooling (mean, standard deviation, and spectral delta moments)
-/// computes a deterministic, noise-invariant 192-d speaker embedding.
-pub fn compute_speaker_embedding(fbank_frames: &[Vec<f32>]) -> Vec<f32> {
-    if fbank_frames.is_empty() {
-        return vec![0.0f32; EMBEDDING_DIM];
-    }
-
-    let num_frames = fbank_frames.len() as f32;
-    let mut means = vec![0.0f32; FBANK_NUM_BINS];
-    let mut vars = vec![0.0f32; FBANK_NUM_BINS];
-
-    for frame in fbank_frames {
-        for (bin_idx, &val) in frame.iter().enumerate() {
-            means[bin_idx] += val;
-        }
-    }
-    for m in &mut means {
-        *m /= num_frames;
-    }
-
-    for frame in fbank_frames {
-        for (bin_idx, &val) in frame.iter().enumerate() {
-            let diff = val - means[bin_idx];
-            vars[bin_idx] += diff * diff;
-        }
-    }
-    for v in &mut vars {
-        *v = (*v / num_frames).sqrt();
-    }
-
-    // 32-bin delta dynamics (sub-band energy contrasts across time)
-    let mut dynamics = vec![0.0f32; 32];
-    if fbank_frames.len() >= 2 {
-        let first_half = &fbank_frames[..fbank_frames.len() / 2];
-        let second_half = &fbank_frames[fbank_frames.len() / 2..];
-
-        for i in 0..32 {
-            let bin = i * (FBANK_NUM_BINS / 32);
-            let avg1: f32 =
-                first_half.iter().map(|f| f[bin]).sum::<f32>() / first_half.len() as f32;
-            let avg2: f32 =
-                second_half.iter().map(|f| f[bin]).sum::<f32>() / second_half.len() as f32;
-            dynamics[i] = avg2 - avg1;
-        }
-    }
-
-    // Cepstral Mean Normalization (CMN):
-    // Removes the static channel transfer function and telephony bandpass offset,
-    // centering the acoustic representation on speaker-specific vocal tract variations.
-    let mean_of_means = means.iter().sum::<f32>() / FBANK_NUM_BINS as f32;
-    for m in &mut means {
-        *m -= mean_of_means;
-    }
-
-    let mean_of_vars = vars.iter().sum::<f32>() / FBANK_NUM_BINS as f32;
-    for v in &mut vars {
-        *v -= mean_of_vars;
-    }
-
-    // Concatenate 80 (mean) + 80 (std) + 32 (dynamics) = 192 dimensions
-    let mut embedding = Vec::with_capacity(EMBEDDING_DIM);
-    embedding.extend_from_slice(&means);
-    embedding.extend_from_slice(&vars);
-    embedding.extend_from_slice(&dynamics);
-
-    // L2 normalize vector
-    let norm = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for x in &mut embedding {
-            *x /= norm;
-        }
-    }
-
-    embedding
-}
-
-/// Accumulator for caller speech audio during a conversation turn.
-/// Collects clean G.711 μ-law frames when the caller speaks and extracts
-/// the normalized 192-dimensional VoiceSignature for vox-core.
+#[derive(Default)]
 pub struct SpeechAccumulator {
-    filterbank: Vec<Vec<f32>>,
     accumulated_mulaw: Vec<u8>,
-    max_samples: usize,
-    onnx_path: Option<String>,
 }
 
 impl SpeechAccumulator {
-    pub fn new() -> Self {
-        let filterbank = build_mel_filterbank(FBANK_NUM_BINS, FFT_SIZE, DEFAULT_TARGET_SAMPLE_RATE);
-        let onnx_path = std::env::var("VOX_SPEAKER_ONNX_PATH")
-            .ok()
-            .filter(|p| !p.trim().is_empty());
+    pub fn new() -> Self { Self::default() }
 
-        Self {
-            filterbank,
-            accumulated_mulaw: Vec::with_capacity(160 * 150), // 3 seconds @ 160 bytes/20ms
-            max_samples: 160 * 150,
-            onnx_path,
-        }
-    }
-
-    /// Appends a raw G.711 μ-law audio frame (160 bytes).
-    /// Filters out background silence and maintains a rolling window of recent speech.
     pub fn push_frame(&mut self, frame: &[u8]) {
-        let rms = crate::voice::vad::calculate_rms(frame);
-        // Only accumulate frames with audible acoustic energy (RMS >= 250), filtering out ambient silence
-        if rms >= 250.0 {
-            if self.accumulated_mulaw.len() + frame.len() > self.max_samples {
-                let excess = (self.accumulated_mulaw.len() + frame.len()) - self.max_samples;
-                self.accumulated_mulaw.drain(0..excess);
-            }
-            self.accumulated_mulaw.extend_from_slice(frame);
-        }
+        if calculate_rms(frame) < 250.0 { return; }
+        let frame = &frame[frame.len().saturating_sub(MAX_SAMPLES)..];
+        let excess = (self.accumulated_mulaw.len() + frame.len()).saturating_sub(MAX_SAMPLES);
+        self.accumulated_mulaw.drain(..excess);
+        self.accumulated_mulaw.extend_from_slice(frame);
     }
 
-    /// Returns true if at least 1 second of speech audio has been captured (>= 8000 bytes).
-    #[allow(dead_code)]
-    pub fn has_sufficient_speech(&self) -> bool {
-        self.accumulated_mulaw.len() >= 160 * 50 // 1.0 second (50 frames)
+    pub fn take_audio(&mut self) -> Vec<u8> { std::mem::take(&mut self.accumulated_mulaw) }
+}
+
+struct SpeakerModel {
+    session: Mutex<Session>,
+    identity: String,
+    fbank: bool,
+}
+
+static MODEL: OnceLock<Option<SpeakerModel>> = OnceLock::new();
+
+pub fn initialize_speaker_model() -> Result<(), String> {
+    if MODEL.get().is_some() { return Ok(()); }
+    let path = std::env::var("VOX_SPEAKER_ONNX_PATH").ok().filter(|p| !p.trim().is_empty());
+    let model = match path {
+        Some(path) => Some(SpeakerModel::load(&path, &std::env::var("VOX_SPEAKER_INPUT").unwrap_or_else(|_| "waveform".into()))?),
+        None => None,
+    };
+    tracing::info!(enabled = model.is_some(), "VOICE_SPEAKER_MODEL_INITIALIZED");
+    let _ = MODEL.set(model);
+    Ok(())
+}
+
+impl SpeakerModel {
+    fn load(path: &str, input: &str) -> Result<Self, String> {
+        if !matches!(input, "waveform" | "fbank") { return Err("VOX_SPEAKER_INPUT must be waveform or fbank".into()); }
+        let bytes = std::fs::read(path).map_err(|e| format!("speaker model file: {e}"))?;
+        let identity = format!("onnx-sha256:{:x}", Sha256::digest([bytes.as_slice(), input.as_bytes(), b"vox-audio-v2"].concat()));
+        let session = Session::builder().and_then(|builder| builder.with_intra_threads(1))
+            .and_then(|builder| builder.commit_from_memory(&bytes)).map_err(|e| format!("speaker model load: {e}"))?;
+        if session.inputs.len() != 1 || session.outputs.len() != 1 { return Err("speaker model must have one float input and one embedding output".into()); }
+        Ok(Self { session: Mutex::new(session), identity, fbank: input == "fbank" })
     }
 
-    /// Extracts the VoiceSignature JSON string to attach to RespondRequest.
-    pub fn extract_signature(&self) -> Option<String> {
-        if self.accumulated_mulaw.is_empty() {
-            return None;
-        }
-
-        let linear_16k = mulaw_8k_to_linear_16k(&self.accumulated_mulaw);
-        if linear_16k.len() < WINDOW_SIZE_SAMPLES {
-            return None;
-        }
-
-        let fbank = compute_fbank(&linear_16k, &self.filterbank);
-        if fbank.is_empty() {
-            return None;
-        }
-
-        let embedding = compute_speaker_embedding(&fbank);
-        let model_name = if self.onnx_path.is_some() {
-            "cam++-onnx"
-        } else {
-            "vox-fbank192"
-        };
-
-        let sig = serde_json::json!({
-            "features": embedding,
-            "sample_count": 1,
-            "model": model_name,
-        });
-
-        Some(sig.to_string())
-    }
-
-    #[allow(dead_code)]
-    pub fn clear(&mut self) {
-        self.accumulated_mulaw.clear();
+    fn extract(&self, audio: &[u8]) -> Result<Option<String>, String> {
+        if audio.len() < MIN_SAMPLES { return Ok(None); }
+        let waveform = mulaw_8k_to_linear_16k(audio);
+        let (shape, values) = if self.fbank {
+            let values = compute_fbank(&waveform);
+            (vec![1, values.len() / BINS, BINS], values)
+        } else { (vec![1, waveform.len()], waveform) };
+        let input = Tensor::from_array((shape, values)).map_err(|e| e.to_string())?;
+        let mut session = self.session.lock().map_err(|_| "speaker session poisoned")?;
+        let outputs = session.run(ort::inputs![input]).map_err(|e| e.to_string())?;
+        let (_, features) = outputs[0].try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
+        let Some(features) = normalize_embedding(features) else { return Ok(None); };
+        Ok(Some(serde_json::json!({
+            "features": features, "sample_count": 1,
+            "sample_duration_ms": audio.len() / 8, "model": self.identity,
+        }).to_string()))
     }
 }
 
-impl Default for SpeechAccumulator {
-    fn default() -> Self {
-        Self::new()
+pub fn extract_audio_signature(audio: Vec<u8>) -> Option<String> {
+    if audio.len() < MIN_SAMPLES { return None; }
+    let model = MODEL.get()?.as_ref()?;
+    match model.extract(&audio) {
+        Ok(signature) => signature,
+        Err(error) => { tracing::warn!(%error, "VOICE_EMBEDDING_INCONCLUSIVE"); None }
     }
+}
+
+fn normalize_embedding(features: &[f32]) -> Option<Vec<f32>> {
+    if features.len() < 16 || features.len() > 4096 || features.iter().any(|v| !v.is_finite()) { return None; }
+    let norm = features.iter().map(|v| (*v as f64).powi(2)).sum::<f64>().sqrt();
+    if norm < 1e-12 || !norm.is_finite() { return None; }
+    Some(features.iter().map(|v| (*v as f64 / norm) as f32).collect())
+}
+
+pub fn mulaw_8k_to_linear_16k(audio: &[u8]) -> Vec<f32> {
+    let mut result = Vec::with_capacity(audio.len() * 2);
+    for (i, &byte) in audio.iter().enumerate() {
+        let current = mulaw_to_linear(byte) as f32 / 32768.0;
+        let next = mulaw_to_linear(*audio.get(i + 1).unwrap_or(&byte)) as f32 / 32768.0;
+        result.push(current);
+        result.push((current + next) * 0.5);
+    }
+    result
+}
+
+struct Fbank {
+    fft: Arc<dyn Fft<f32>>,
+    filters: Vec<Vec<f32>>,
+    window: Vec<f32>,
+}
+
+static FBANK: LazyLock<Fbank> = LazyLock::new(|| {
+    let mel = |hz: f32| 1127.0 * (1.0 + hz / 700.0).ln();
+    let low = mel(20.0);
+    let step = (mel(8000.0) - low) / (BINS + 1) as f32;
+    let filters = (0..BINS).map(|bin| {
+        let left = low + bin as f32 * step;
+        let center = left + step;
+        let right = center + step;
+        (0..=FFT_SIZE / 2).map(|k| {
+            let frequency = mel(k as f32 * 16000.0 / FFT_SIZE as f32);
+            ((frequency - left) / (center - left)).min((right - frequency) / (right - center)).max(0.0)
+        }).collect()
+    }).collect();
+    let window = (0..400).map(|i| (0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / 399.0).cos()).powf(0.85)).collect();
+    Fbank { fft: FftPlanner::new().plan_fft_forward(FFT_SIZE), filters, window }
+});
+
+fn compute_fbank(waveform: &[f32]) -> Vec<f32> {
+    let mut output = Vec::new();
+    let mut spectrum = vec![Complex::new(0.0, 0.0); FFT_SIZE];
+    let mut scratch = vec![Complex::new(0.0, 0.0); FBANK.fft.get_inplace_scratch_len()];
+    for start in (0..waveform.len().saturating_sub(399)).step_by(160) {
+        let frame = &waveform[start..start + 400];
+        let mean = frame.iter().sum::<f32>() / 400.0;
+        spectrum.fill(Complex::new(0.0, 0.0));
+        for i in 0..400 {
+            let current = (frame[i] - mean) * 32768.0;
+            let previous = (frame[i.saturating_sub(1)] - mean) * 32768.0;
+            spectrum[i].re = (current - 0.97 * previous) * FBANK.window[i];
+        }
+        FBANK.fft.process_with_scratch(&mut spectrum, &mut scratch);
+        for filter in &FBANK.filters {
+            let power = filter.iter().zip(&spectrum).map(|(weight, value)| weight * value.norm_sqr()).sum::<f32>();
+            output.push(power.max(f32::EPSILON).ln());
+        }
+    }
+    let frames = output.len() / BINS;
+    if frames > 0 {
+        for bin in 0..BINS {
+            let mean = (0..frames).map(|frame| output[frame * BINS + bin]).sum::<f32>() / frames as f32;
+            for frame in 0..frames { output[frame * BINS + bin] -= mean; }
+        }
+    }
+    output
 }
 
 #[cfg(test)]
@@ -336,40 +162,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mulaw_8k_to_linear_16k_interpolation() {
-        let mulaw = vec![0x90; 80]; // 80 samples at 8kHz
-        let pcm_16k = mulaw_8k_to_linear_16k(&mulaw);
-        assert_eq!(pcm_16k.len(), 160); // 2x upsampled to 16kHz
+    fn short_samples_and_unconfigured_model_never_produce_synthetic_identity() {
+        assert!(extract_audio_signature(vec![0x90; 7999]).is_none());
     }
 
     #[test]
-    fn test_mel_filterbank_shape() {
-        let fb = build_mel_filterbank(80, 512, 16000);
-        assert_eq!(fb.len(), 80);
-        assert_eq!(fb[0].len(), 257); // 512 / 2 + 1
+    fn rejects_invalid_embeddings() {
+        assert!(normalize_embedding(&[0.0; 192]).is_none());
+        assert!(normalize_embedding(&[f32::NAN; 192]).is_none());
+        assert!(normalize_embedding(&[f32::INFINITY; 192]).is_none());
+        let normalized = normalize_embedding(&[2.0; 192]).unwrap();
+        assert!((normalized.iter().map(|v| v * v).sum::<f32>() - 1.0).abs() < 1e-5);
     }
 
     #[test]
-    fn test_speech_accumulator_lifecycle() {
-        let mut acc = SpeechAccumulator::new();
-        assert!(!acc.has_sufficient_speech());
-        assert_eq!(acc.extract_signature(), None);
+    fn snapshot_releases_audio_and_bounds_large_frames() {
+        let mut accumulator = SpeechAccumulator::new();
+        accumulator.push_frame(&vec![0x90; MAX_SAMPLES + 160]);
+        assert_eq!(accumulator.take_audio().len(), MAX_SAMPLES);
+        assert!(accumulator.take_audio().is_empty());
+        accumulator.push_frame(&[0xff; 160]);
+        assert!(accumulator.take_audio().is_empty());
+    }
 
-        // Push 60 frames of audio (~1.2 seconds of speech)
-        for _ in 0..60 {
-            acc.push_frame(&[0x90; 160]);
+    #[test]
+    fn fbank_has_expected_shape_and_temporal_mean_normalization() {
+        let waveform: Vec<f32> = (0..16000).map(|i| (i as f32 * 0.07).sin()).collect();
+        let features = compute_fbank(&waveform);
+        assert_eq!(features.len(), 98 * BINS);
+        assert!(features.iter().all(|v| v.is_finite()));
+        for bin in 0..BINS {
+            let mean = (0..98).map(|frame| features[frame * BINS + bin]).sum::<f32>() / 98.0;
+            assert!(mean.abs() < 0.0001);
         }
-        assert!(acc.has_sufficient_speech());
-
-        let sig_json = acc.extract_signature().expect("signature generated");
-        assert!(sig_json.contains("\"features\""));
-        assert!(sig_json.contains("\"model\""));
-
-        let parsed: serde_json::Value = serde_json::from_str(&sig_json).unwrap();
-        let features = parsed["features"].as_array().unwrap();
-        assert_eq!(features.len(), 192);
-
-        acc.clear();
-        assert!(!acc.has_sufficient_speech());
     }
 }

@@ -5,11 +5,11 @@
 Inbound Twilio calls use a bidirectional Media Stream through a configurable
 voice pipeline:
 
-`Twilio -> AssemblyAI -> Vox Core -> Sarvam -> Twilio`
+`Twilio -> AssemblyAI -> Vox Core -> (Sarvam | ElevenLabs) -> Twilio`
 
 The Twilio adapter accepts μ-law audio at 8000 Hz. AssemblyAI transcribes the
 incoming stream, finalized turns are sent to Vox Core, and
-Sarvam streams the response back as μ-law audio at 8000 Hz without
+the selected TTS provider streams the response back as μ-law audio at 8000 Hz without
 transcoding. Caller speech interrupts active playback.
 
 Set the required credentials in the local `.env` and in the deployed service
@@ -20,15 +20,24 @@ TWILIO_AUTH_TOKEN=your-twilio-auth-token
 ASSEMBLYAI_API_KEY=your-assemblyai-api-key
 VOX_CORE_URL=http://core-api:3001
 VOX_CORE_SERVICE_TOKEN=replace-with-a-shared-service-token
-SARVAM_API_KEY=your-sarvam-api-key
+ELEVENLABS_API_KEY=your-elevenlabs-api-key
 ```
 
-The default provider profile can be stated explicitly:
+The default provider profile uses ElevenLabs TTS:
 
 ```dotenv
 VOX_STT_PROVIDER=assemblyai
 ASSEMBLYAI_SPEECH_MODEL=universal-3-5-pro
+VOX_TTS_PROVIDER=elevenlabs
+ELEVENLABS_MODEL_ID=eleven_flash_v2_5
+ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
+```
+
+To use Sarvam for text-to-speech:
+
+```dotenv
 VOX_TTS_PROVIDER=sarvam
+SARVAM_API_KEY=your-sarvam-api-key
 SARVAM_TTS_MODEL=bulbul:v3
 SARVAM_LANGUAGE_CODE=en-IN
 SARVAM_SPEAKER=shubh
@@ -36,7 +45,7 @@ SARVAM_TTS_PACE=1.0
 ```
 
 Provider, model, language, and speaker choices are represented independently.
-The current build registers one implementation for each stage and rejects
+The current build registers implementations for each stage and rejects
 unsupported provider names during startup.
 
 Configure Twilio Voice to send incoming call webhooks to:

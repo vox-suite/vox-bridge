@@ -1,6 +1,6 @@
 use crate::voice::{
     context::CallContext,
-    provider::{AgentProvider, TextStream, VoiceError},
+    provider::{AgentProvider, TextStream, VoiceError, AgentEvent, AgentEventStream},
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -13,6 +13,7 @@ pub struct CoreAgentClient {
     base_url: String,
     endpoint: String,
     service_token: String,
+    tts_provider: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -23,6 +24,10 @@ struct RespondRequest<'a> {
     initiation_context: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     voice_signature: Option<&'a str>,
+    turn_id: Option<&'a str>,
+    revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tts_provider: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -52,7 +57,13 @@ impl CoreAgentClient {
             endpoint: format!("{trimmed}/v1/conversations/respond"),
             base_url: trimmed,
             service_token,
+            tts_provider: None,
         })
+    }
+
+    pub fn with_tts_provider(mut self, provider: impl Into<String>) -> Self {
+        self.tts_provider = Some(provider.into());
+        self
     }
 }
 
@@ -72,6 +83,9 @@ impl AgentProvider for CoreAgentClient {
                 text: transcript,
                 initiation_context: context.initiation_context.as_deref(),
                 voice_signature: context.voice_signature.as_deref(),
+                turn_id: context.turn_id.as_deref(),
+                revision: context.revision,
+                tts_provider: context.tts_provider.as_deref().or(self.tts_provider.as_deref()),
             })
             .send()
             .await
@@ -86,11 +100,11 @@ impl AgentProvider for CoreAgentClient {
             .map_err(|_| provider_error("Core returned an invalid response"))
     }
 
-    async fn respond_stream(
+    async fn respond_events(
         &self,
         context: &CallContext,
         transcript: &str,
-    ) -> Result<TextStream, VoiceError> {
+    ) -> Result<AgentEventStream, VoiceError> {
         let stream_endpoint = format!("{}/v1/conversations/respond/stream", self.base_url);
         let request = RespondRequest {
             identity: Identity {
@@ -101,6 +115,9 @@ impl AgentProvider for CoreAgentClient {
             text: transcript,
             initiation_context: context.initiation_context.as_deref(),
             voice_signature: context.voice_signature.as_deref(),
+            turn_id: context.turn_id.as_deref(),
+            revision: context.revision,
+            tts_provider: context.tts_provider.as_deref().or(self.tts_provider.as_deref()),
         };
 
         let start_time = std::time::Instant::now();
@@ -124,7 +141,7 @@ impl AgentProvider for CoreAgentClient {
                 let stream = response.bytes_stream();
                 Ok(Box::pin(parse_sse_stream(stream)))
             }
-            _ => {
+            Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND || response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED => {
                 tracing::warn!(
                     endpoint = %stream_endpoint,
                     elapsed_ms = start_time.elapsed().as_millis(),
@@ -132,9 +149,30 @@ impl AgentProvider for CoreAgentClient {
                 );
                 // Fallback to standard unary endpoint if streaming is unsupported by core
                 let text = self.respond(context, transcript).await?;
-                Ok(Box::pin(stream::once(async move { Ok(text) })))
+                Ok(Box::pin(stream::once(async move { Ok(AgentEvent::Text(text)) })))
             }
+            _ => Err(provider_error("Core stream request failed")),
         }
+    }
+
+    async fn respond_stream(&self, context: &CallContext, transcript: &str) -> Result<TextStream, VoiceError> {
+        Ok(Box::pin(self.respond_events(context, transcript).await?.filter_map(|item| async {
+            match item { Ok(AgentEvent::Text(text)) => Some(Ok(text)), Ok(AgentEvent::LookupPending) => None, Err(err) => Some(Err(err)) }
+        })))
+    }
+
+    async fn speculate(&self, context: &CallContext, transcript: &str) -> Result<(), VoiceError> {
+        let response = self.client.post(format!("{}/v1/conversations/speculate", self.base_url))
+            .bearer_auth(&self.service_token)
+            .timeout(Duration::from_secs(6))
+            .json(&serde_json::json!({
+                "identity": {"channel": context.channel, "external_id": context.external_identity},
+                "external_conversation_id": context.external_conversation_id,
+                "text": transcript, "turn_id": context.turn_id, "revision": context.revision,
+                "tts_provider": context.tts_provider.as_deref().or(self.tts_provider.as_deref())
+            })).send().await.map_err(|_| provider_error("Core speculation failed"))?;
+        if !response.status().is_success() { return Err(provider_error("Core speculation unavailable")); }
+        Ok(())
     }
 
     async fn complete(&self, context: &CallContext) -> Result<(), VoiceError> {
@@ -160,83 +198,56 @@ impl AgentProvider for CoreAgentClient {
     }
 }
 
-fn parse_sse_stream<S>(bytes_stream: S) -> impl Stream<Item = Result<String, VoiceError>>
+fn parse_sse_stream<S>(bytes_stream: S) -> impl Stream<Item = Result<AgentEvent, VoiceError>>
 where
     S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin + 'static,
 {
-    stream::unfold(
-        (bytes_stream, String::new(), false),
-        |(mut stream, mut buffer, done)| async move {
-            if done {
-                return None;
-            }
-
+    stream::unfold((bytes_stream, Vec::<u8>::new(), String::new(), false),
+        |(mut source, mut buffer, mut event, mut ended)| async move {
             loop {
-                if let Some(newline_pos) = buffer.find('\n') {
-                    let line = buffer[..newline_pos].trim().to_string();
-                    buffer = buffer[newline_pos + 1..].to_string();
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
+                let newline = buffer.iter().position(|byte| *byte == b'\n');
+                if newline.is_some() || (ended && !buffer.is_empty()) {
+                    let length = newline.map(|n| n + 1).unwrap_or(buffer.len());
+                    let bytes: Vec<u8> = buffer.drain(..length).collect();
+                    let line = match std::str::from_utf8(&bytes) {
+                        Ok(line) => line.trim(),
+                        Err(_) => return Some((Err(provider_error("Core returned invalid UTF-8")), (source, Vec::new(), event, true))),
+                    };
+                    if line.is_empty() { event.clear(); continue; }
+                    if let Some(value) = line.strip_prefix("event:") { event = value.trim().into(); continue; }
                     if let Some(data) = line.strip_prefix("data:") {
                         let data = data.trim();
-                        if data == "[DONE]" {
-                            return None;
+                        if data == "[DONE]" { return None; }
+                        if event == "lookup_pending" {
+                            event.clear();
+                            return Some((Ok(AgentEvent::LookupPending), (source, buffer, event, ended)));
                         }
-
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(delta) = val
-                                .get("delta")
-                                .and_then(|d| d.as_str())
-                                .filter(|d| !d.is_empty())
-                            {
-                                return Some((Ok(delta.to_string()), (stream, buffer, done)));
-                            }
-                            if let Some(text) = val
-                                .get("text")
-                                .and_then(|t| t.as_str())
-                                .filter(|t| !t.is_empty())
-                            {
-                                return Some((Ok(text.to_string()), (stream, buffer, done)));
-                            }
-                        } else if !data.is_empty() {
-                            return Some((Ok(data.to_string()), (stream, buffer, done)));
+                        let value = match serde_json::from_str::<serde_json::Value>(data) {
+                            Ok(value) => value,
+                            Err(_) => return Some((Err(provider_error("Core returned invalid SSE data")), (source, Vec::new(), event, true))),
+                        };
+                        if value.get("error").is_some() || event == "error" {
+                            return Some((Err(provider_error("Core stream returned an error")), (source, Vec::new(), event, true)));
+                        }
+                        if let Some(text) = value.get("delta").or_else(|| value.get("text")).and_then(|value| value.as_str()).filter(|text| !text.is_empty()) {
+                            return Some((Ok(AgentEvent::Text(text.into())), (source, buffer, event, ended)));
                         }
                     }
+                    continue;
                 }
-
-                match stream.next().await {
+                if ended { return None; }
+                match source.next().await {
                     Some(Ok(bytes)) => {
-                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    }
-                    Some(Err(err)) => {
-                        return Some((
-                            Err(VoiceError::Provider {
-                                provider: "vox-core",
-                                message: format!("streaming error: {err}"),
-                            }),
-                            (stream, buffer, true),
-                        ));
-                    }
-                    None => {
-                        if !buffer.trim().is_empty() {
-                            let line = buffer.trim().to_string();
-                            buffer.clear();
-                            if let Some(data) = line.strip_prefix("data:") {
-                                let data = data.trim();
-                                if data != "[DONE]" && !data.is_empty() {
-                                    return Some((Ok(data.to_string()), (stream, buffer, true)));
-                                }
-                            }
+                        buffer.extend_from_slice(&bytes);
+                        if buffer.len() > 1024 * 1024 {
+                            return Some((Err(provider_error("Core SSE frame too large")), (source, Vec::new(), event, true)));
                         }
-                        return None;
                     }
+                    Some(Err(_)) => return Some((Err(provider_error("Core stream disconnected")), (source, Vec::new(), event, true))),
+                    None => ended = true,
                 }
             }
-        },
-    )
+        })
 }
 
 fn configuration(message: &str) -> VoiceError {
@@ -249,3 +260,26 @@ fn provider_error(message: &str) -> VoiceError {
         message: message.into(),
     }
 }
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn handles_fragmented_unicode_pending_and_unterminated_last_frame() {
+        let data = "event: lookup_pending\ndata: {}\n\ndata: {\"delta\":\"नमस्ते\"}";
+        let bytes = data.as_bytes().iter().map(|byte| Ok(Bytes::from(vec![*byte]))).collect::<Vec<_>>();
+        let events = parse_sse_stream(stream::iter(bytes)).collect::<Vec<_>>().await;
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].as_ref().unwrap(), &AgentEvent::LookupPending);
+        assert_eq!(events[1].as_ref().unwrap(), &AgentEvent::Text("नमस्ते".into()));
+    }
+
+    #[tokio::test]
+    async fn stream_error_is_not_spoken_as_text() {
+        let events = parse_sse_stream(stream::iter(vec![Ok(Bytes::from_static(b"event: error\ndata: {\"error\":\"unavailable\"}\n\n"))])).collect::<Vec<_>>().await;
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is_err());
+    }
+}
+

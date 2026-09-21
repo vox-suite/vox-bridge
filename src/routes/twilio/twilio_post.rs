@@ -179,7 +179,7 @@ mod tests {
                 "VOX_CORE_SERVICE_TOKEN".to_owned(),
                 "service-token".to_owned(),
             ),
-            ("SARVAM_API_KEY".to_owned(), "sarvam-key".to_owned()),
+            ("ELEVENLABS_API_KEY".to_owned(), "eleven-key".to_owned()),
         ]);
         let voice_config =
             crate::voice::config::VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();

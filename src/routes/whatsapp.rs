@@ -141,6 +141,9 @@ pub async fn wa_receive(
                                     .as_ref()
                                     .map(|n| format!("whatsapp_name:{n}")),
                                 voice_signature: None,
+                                turn_id: None,
+                                revision: None,
+                                tts_provider: None,
                             };
                             if let Ok(reply) = providers.agent.respond(&context, &body).await {
                                 let _ = send_message(&reply, from.as_str()).await;

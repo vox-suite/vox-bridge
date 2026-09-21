@@ -8,9 +8,18 @@ use thiserror::Error;
 pub type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, VoiceError>> + Send>>;
 pub type TextStream = Pin<Box<dyn Stream<Item = Result<String, VoiceError>> + Send>>;
 
+pub type AgentEventStream = Pin<Box<dyn Stream<Item = Result<AgentEvent, VoiceError>> + Send>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentEvent {
+    Text(String),
+    LookupPending,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SttEvent {
     SpeechStarted,
+    PartialTranscript(String),
     FinalTranscript(String),
 }
 
@@ -53,6 +62,13 @@ pub trait AgentProvider: Send + Sync {
         Ok(Box::pin(futures_util::stream::once(
             async move { Ok(text) },
         )))
+    }
+    async fn respond_events(&self, context: &CallContext, transcript: &str) -> Result<AgentEventStream, VoiceError> {
+        use futures_util::StreamExt;
+        Ok(Box::pin(self.respond_stream(context, transcript).await?.map(|result| result.map(AgentEvent::Text))))
+    }
+    async fn speculate(&self, _context: &CallContext, _transcript: &str) -> Result<(), VoiceError> {
+        Ok(())
     }
     async fn complete(&self, _context: &CallContext) -> Result<(), VoiceError> {
         Ok(())
