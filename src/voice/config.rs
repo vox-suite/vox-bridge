@@ -55,7 +55,6 @@ impl VoiceConfig {
             "VOX_TTS_PROVIDER",
             "ASSEMBLYAI_API_KEY",
             "ASSEMBLYAI_SPEECH_MODEL",
-            "VOX_CORE_URL",
             "VOX_CORE_SERVICE_TOKEN",
             "SARVAM_API_KEY",
             "SARVAM_TTS_MODEL",
@@ -82,7 +81,9 @@ impl VoiceConfig {
         require_provider("TTS", &tts_provider, &["sarvam", "elevenlabs"])?;
 
         let assemblyai_api_key = required(&get, "ASSEMBLYAI_API_KEY")?;
-        let core_url = value_or(&get, "VOX_CORE_URL", "http://127.0.0.1:3001");
+        let core_url = get("VOX_CORE_URL")
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(default_core_url);
         let core_service_token = required(&get, "VOX_CORE_SERVICE_TOKEN")?;
 
         let (tts_model, speaker, pace, language_code, sarvam_api_key, elevenlabs_api_key) =
@@ -185,6 +186,15 @@ where
     get(key)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| VoiceError::Configuration(format!("{key} is missing")))
+}
+
+fn default_core_url() -> String {
+    use std::net::ToSocketAddrs;
+    if ("core-api", 3001).to_socket_addrs().is_ok() {
+        "http://core-api:3001".to_string()
+    } else {
+        "http://127.0.0.1:3001".to_string()
+    }
 }
 
 fn require_provider(kind: &str, actual: &str, supported: &[&str]) -> Result<(), VoiceError> {
