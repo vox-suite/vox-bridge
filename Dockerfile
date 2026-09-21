@@ -9,6 +9,9 @@ RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates curl libstdc++6 && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /models && \
+    curl -fSL -o /models/speaker.onnx "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx" && \
+    chmod -R 755 /models
 RUN useradd -m -u 1000 -U vox
 USER vox
 

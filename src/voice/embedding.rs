@@ -38,9 +38,19 @@ static MODEL: OnceLock<Option<SpeakerModel>> = OnceLock::new();
 
 pub fn initialize_speaker_model() -> Result<(), String> {
     if MODEL.get().is_some() { return Ok(()); }
-    let path = std::env::var("VOX_SPEAKER_ONNX_PATH").ok().filter(|p| !p.trim().is_empty());
+    let path = std::env::var("VOX_SPEAKER_ONNX_PATH").ok().filter(|p| !p.trim().is_empty())
+        .or_else(|| {
+            if std::path::Path::new("/models/speaker.onnx").exists() {
+                Some("/models/speaker.onnx".into())
+            } else if std::path::Path::new("models/speaker.onnx").exists() {
+                Some("models/speaker.onnx".into())
+            } else {
+                None
+            }
+        });
+    let input = std::env::var("VOX_SPEAKER_INPUT").unwrap_or_else(|_| "fbank".into());
     let model = match path {
-        Some(path) => Some(SpeakerModel::load(&path, &std::env::var("VOX_SPEAKER_INPUT").unwrap_or_else(|_| "waveform".into()))?),
+        Some(path) => Some(SpeakerModel::load(&path, &input)?),
         None => None,
     };
     tracing::info!(enabled = model.is_some(), "VOICE_SPEAKER_MODEL_INITIALIZED");
@@ -194,6 +204,18 @@ mod tests {
         for bin in 0..BINS {
             let mean = (0..98).map(|frame| features[frame * BINS + bin]).sum::<f32>() / 98.0;
             assert!(mean.abs() < 0.0001);
+        }
+    }
+
+    #[test]
+    fn speaker_model_loads_and_extracts_embedding() {
+        if let Ok(model) = SpeakerModel::load("models/speaker.onnx", "fbank") {
+            let audio = vec![0x90; 16000];
+            let sig = model.extract(&audio).unwrap();
+            assert!(sig.is_some());
+            let json: serde_json::Value = serde_json::from_str(&sig.unwrap()).unwrap();
+            assert_eq!(json["sample_duration_ms"], 2000);
+            assert!(json["features"].as_array().unwrap().len() >= 128);
         }
     }
 }
