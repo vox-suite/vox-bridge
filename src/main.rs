@@ -46,7 +46,6 @@ async fn main() {
             .expect("voice provider runtime initialization failed"),
     );
 
-    // Pre-warm the Sarvam TTS keep-alive connection and cache top spoken fillers in memory
     let profile = voice.resolver.resolve();
     if let Ok(providers) = voice.providers.providers_for(&profile) {
         crate::voice::filler::prewarm_fillers(providers.tts.clone());
@@ -114,7 +113,6 @@ async fn main() {
 
     println!("Server running on http://0.0.0.0:3000");
 
-    // Warm up the HTTP connection pool to vox-core asynchronously in the background
     let prewarm_url = core_url.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;

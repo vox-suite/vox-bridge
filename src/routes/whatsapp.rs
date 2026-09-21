@@ -115,7 +115,6 @@ pub async fn wa_receive(
                 for change in entry.changes.into_iter().flatten() {
                     let Some(value) = change.value else { continue };
 
-                    // Extract user profile display name from Meta contacts if available
                     let profile_name = value
                         .contacts
                         .as_ref()

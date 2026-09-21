@@ -75,13 +75,15 @@ impl TtsProvider for ElevenLabsTts {
             return Ok(Box::pin(futures_util::stream::empty()));
         }
 
-        let voice_settings = self.settings.voice_settings.as_ref().map(|s| {
-            ElevenLabsVoiceSettingsRequest {
-                stability: s.stability,
-                similarity_boost: s.similarity_boost,
-                speed: s.speed,
-            }
-        });
+        let voice_settings =
+            self.settings
+                .voice_settings
+                .as_ref()
+                .map(|s| ElevenLabsVoiceSettingsRequest {
+                    stability: s.stability,
+                    similarity_boost: s.similarity_boost,
+                    speed: s.speed,
+                });
 
         let request = ElevenLabsRequest {
             text: trimmed,
@@ -168,12 +170,12 @@ mod tests {
                             Response::builder()
                                 .status(status)
                                 .body(Body::from_stream(stream::iter([
-                                    Ok::<_, std::convert::Infallible>(bytes::Bytes::from_static(&[
-                                        10, 20,
-                                    ])),
-                                    Ok::<_, std::convert::Infallible>(bytes::Bytes::from_static(&[
-                                        30, 40,
-                                    ])),
+                                    Ok::<_, std::convert::Infallible>(bytes::Bytes::from_static(
+                                        &[10, 20],
+                                    )),
+                                    Ok::<_, std::convert::Infallible>(bytes::Bytes::from_static(
+                                        &[30, 40],
+                                    )),
                                 ])))
                                 .unwrap()
                         } else {
@@ -245,7 +247,10 @@ mod tests {
 
         let error = provider.synthesize("Hello").await.err().unwrap();
 
-        assert_eq!(error.to_string(), "elevenlabs provider error: request failed");
+        assert_eq!(
+            error.to_string(),
+            "elevenlabs provider error: request failed"
+        );
         assert!(!error.to_string().contains("sensitive"));
     }
 

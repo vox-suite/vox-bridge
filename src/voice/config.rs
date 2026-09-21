@@ -113,8 +113,7 @@ impl VoiceConfig {
                         pace,
                         value_or(&get, "SARVAM_LANGUAGE_CODE", "en-IN"),
                         Some(sarvam_api_key),
-                        get("ELEVENLABS_API_KEY")
-                            .filter(|v| !v.trim().is_empty()),
+                        get("ELEVENLABS_API_KEY").filter(|v| !v.trim().is_empty()),
                     )
                 }
                 "elevenlabs" => {
@@ -320,7 +319,10 @@ mod tests {
         let mut values = valid_values();
         values.insert("VOX_TTS_PROVIDER".into(), "elevenlabs".into());
         values.insert("ELEVENLABS_API_KEY".into(), "custom-xi-key".into());
-        values.insert("ELEVENLABS_MODEL_ID".into(), "eleven_multilingual_v2".into());
+        values.insert(
+            "ELEVENLABS_MODEL_ID".into(),
+            "eleven_multilingual_v2".into(),
+        );
         values.insert("ELEVENLABS_VOICE_ID".into(), "custom-voice-id".into());
 
         let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
@@ -332,7 +334,6 @@ mod tests {
             config.secrets.elevenlabs_api_key.as_deref(),
             Some("custom-xi-key")
         );
-
     }
 
     #[test]

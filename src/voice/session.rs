@@ -124,7 +124,8 @@ pub async fn run_voice_session(
             }
         }
     });
-    let (speculation_tx, mut speculation_rx) = tokio::sync::watch::channel::<Option<(CallContext, String)>>(None);
+    let (speculation_tx, mut speculation_rx) =
+        tokio::sync::watch::channel::<Option<(CallContext, String)>>(None);
     let speculation_agent = providers.agent.clone();
     let speculation_task = tokio::spawn(async move {
         while speculation_rx.changed().await.is_ok() {
@@ -163,9 +164,17 @@ pub async fn run_voice_session(
     if let Some(ref opening) = context.initiation_context {
         response_number += 1;
         active_response = Some(spawn_response(
-            response_number, context.clone(), opening.clone(), None, None,
-            providers.agent.clone(), providers.tts.clone(),
-            output.clone(), signal_tx.clone(), audio_playing.clone(), answer_started.clone(),
+            response_number,
+            context.clone(),
+            opening.clone(),
+            None,
+            None,
+            providers.agent.clone(),
+            providers.tts.clone(),
+            output.clone(),
+            signal_tx.clone(),
+            audio_playing.clone(),
+            answer_started.clone(),
         ));
     }
 
@@ -181,8 +190,11 @@ pub async fn run_voice_session(
             }, if !caller_speaking => SessionSignal::Settle,
         };
         match signal {
-            onset @ (SessionSignal::SpeechDetected | SessionSignal::Stt(SttEvent::SpeechStarted)) => {
-                if caller_speaking { continue; }
+            onset @ (SessionSignal::SpeechDetected
+            | SessionSignal::Stt(SttEvent::SpeechStarted)) => {
+                if caller_speaking {
+                    continue;
+                }
                 caller_speaking = true;
                 settle_at = None;
                 speech_started_at.get_or_insert_with(std::time::Instant::now);
@@ -199,17 +211,35 @@ pub async fn run_voice_session(
                     }
                 }
                 if is_playing {
-                    if answer_started.load(std::sync::atomic::Ordering::SeqCst) { dispatched = None; }
-                    output.send(CallCommand::Clear).await.map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+                    if answer_started.load(std::sync::atomic::Ordering::SeqCst) {
+                        dispatched = None;
+                    }
+                    output
+                        .send(CallCommand::Clear)
+                        .await
+                        .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
                 }
-                tracing::info!(turn = response_number, playing = is_playing, source = if matches!(onset, SessionSignal::SpeechDetected) { "vad" } else { "stt" }, "VOICE_TURN_INTERRUPTED");
+                tracing::info!(
+                    turn = response_number,
+                    playing = is_playing,
+                    source = if matches!(onset, SessionSignal::SpeechDetected) {
+                        "vad"
+                    } else {
+                        "stt"
+                    },
+                    "VOICE_TURN_INTERRUPTED"
+                );
             }
             SessionSignal::SpeechEnded => {
                 caller_speaking = false;
-                if !draft.text.is_empty() && !draft.has_partial() { settle_at = Some(tokio::time::Instant::now() + draft.settle_delay()); }
+                if !draft.text.is_empty() && !draft.has_partial() {
+                    settle_at = Some(tokio::time::Instant::now() + draft.settle_delay());
+                }
             }
             SessionSignal::PlaybackFinished(name) => {
-                if name == format!("filler-{response_number}") && !answer_started.load(std::sync::atomic::Ordering::SeqCst) {
+                if name == format!("filler-{response_number}")
+                    && !answer_started.load(std::sync::atomic::Ordering::SeqCst)
+                {
                     audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
                 }
                 if name == format!("response-{response_number}") {
@@ -228,12 +258,16 @@ pub async fn run_voice_session(
                 settle_at = None;
             }
             SessionSignal::Stt(SttEvent::FinalTranscript(text)) => {
-                if text.trim().is_empty() { continue; }
+                if text.trim().is_empty() {
+                    continue;
+                }
                 caller_speaking = false;
                 let now = std::time::Instant::now();
                 let last_audio = *last_audio_at.lock().unwrap();
                 let timing = draft_timing.get_or_insert(TurnTiming {
-                    speech_started_at: speech_started_at.take(), last_audio_at: last_audio, transcript_received_at: now,
+                    speech_started_at: speech_started_at.take(),
+                    last_audio_at: last_audio,
+                    transcript_received_at: now,
                 });
                 timing.last_audio_at = last_audio;
                 if let Some(task) = active_response.take() {
@@ -244,11 +278,17 @@ pub async fn run_voice_session(
                         && let Some((previous, previous_timing)) = dispatched.take()
                     {
                         draft = previous;
-                        draft_timing = Some(TurnTiming { last_audio_at: last_audio, ..previous_timing });
+                        draft_timing = Some(TurnTiming {
+                            last_audio_at: last_audio,
+                            ..previous_timing
+                        });
                     }
                 }
                 if audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                    output.send(CallCommand::Clear).await.map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+                    output
+                        .send(CallCommand::Clear)
+                        .await
+                        .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
                     dispatched = None;
                 }
                 draft.finish(&text);
@@ -262,10 +302,14 @@ pub async fn run_voice_session(
             }
             SessionSignal::Settle => {
                 settle_at = None;
-                if draft.text.is_empty() { continue; }
+                if draft.text.is_empty() {
+                    continue;
+                }
                 let turn = std::mem::take(&mut draft);
                 let timing = draft_timing.take().unwrap_or(TurnTiming {
-                    speech_started_at: None, last_audio_at: None, transcript_received_at: std::time::Instant::now(),
+                    speech_started_at: None,
+                    last_audio_at: None,
+                    transcript_received_at: std::time::Instant::now(),
                 });
                 context.turn_id = Some(turn.id.clone());
                 context.revision = Some(turn.revision);
@@ -275,19 +319,32 @@ pub async fn run_voice_session(
                 answer_started.store(false, std::sync::atomic::Ordering::SeqCst);
                 dispatched = Some((turn.clone(), timing.clone()));
                 active_response = Some(spawn_response(
-                    response_number, context.clone(), turn.text, Some(timing), Some(audio),
-                    providers.agent.clone(), providers.tts.clone(),
-                    output.clone(), signal_tx.clone(), audio_playing.clone(), answer_started.clone(),
+                    response_number,
+                    context.clone(),
+                    turn.text,
+                    Some(timing),
+                    Some(audio),
+                    providers.agent.clone(),
+                    providers.tts.clone(),
+                    output.clone(),
+                    signal_tx.clone(),
+                    audio_playing.clone(),
+                    answer_started.clone(),
                 ));
             }
             SessionSignal::ResponseFinished(number) => {
                 if number == response_number {
                     active_response.take();
-                    if !audio_playing.load(std::sync::atomic::Ordering::SeqCst) { dispatched = None; }
+                    if !audio_playing.load(std::sync::atomic::Ordering::SeqCst) {
+                        dispatched = None;
+                    }
                 }
             }
             SessionSignal::Stop => break,
-            SessionSignal::Failure(error) => { failure = Some(error); break; }
+            SessionSignal::Failure(error) => {
+                failure = Some(error);
+                break;
+            }
         }
     }
     stop_task(speculation_task).await;
@@ -341,8 +398,18 @@ fn spawn_response(
         };
         if let Some(audio) = audio {
             let started = std::time::Instant::now();
-            context.voice_signature = tokio::task::spawn_blocking(move || crate::voice::embedding::extract_audio_signature(audio)).await.ok().flatten();
-            tracing::info!(turn = number, elapsed_ms = started.elapsed().as_millis(), available = context.voice_signature.is_some(), "VOICE_EMBEDDING_FINISHED");
+            context.voice_signature = tokio::task::spawn_blocking(move || {
+                crate::voice::embedding::extract_audio_signature(audio)
+            })
+            .await
+            .ok()
+            .flatten();
+            tracing::info!(
+                turn = number,
+                elapsed_ms = started.elapsed().as_millis(),
+                available = context.voice_signature.is_some(),
+                "VOICE_EMBEDDING_FINISHED"
+            );
         }
         let result = stream_response(
             number,
@@ -405,8 +472,12 @@ async fn stream_response(
     let mut filler_played = false;
     let mut filler_audio_at = None;
     let mut lookup_deadline = None;
-    let mut text_stream = tokio::time::timeout(Duration::from_secs(30), agent.respond_events(context, transcript))
-        .await.map_err(|_| VoiceError::Timeout("Core response"))??;
+    let mut text_stream = tokio::time::timeout(
+        Duration::from_secs(30),
+        agent.respond_events(context, transcript),
+    )
+    .await
+    .map_err(|_| VoiceError::Timeout("Core response"))??;
 
     loop {
         let next = tokio::select! {
@@ -428,16 +499,21 @@ async fn stream_response(
                 continue;
             }
         };
-        let Some(event) = next else { break; };
+        let Some(event) = next else {
+            break;
+        };
         let chunk = match event? {
             crate::voice::provider::AgentEvent::LookupPending => {
                 if !filler_played && first_token_at.is_none() && lookup_deadline.is_none() {
-                    lookup_deadline = Some(tokio::time::Instant::now() + Duration::from_millis(400));
+                    lookup_deadline =
+                        Some(tokio::time::Instant::now() + Duration::from_millis(400));
                 }
                 continue;
             }
             crate::voice::provider::AgentEvent::Text(text) => {
-                if text.trim().is_empty() { continue; }
+                if text.trim().is_empty() {
+                    continue;
+                }
                 lookup_deadline = None;
                 text
             }
@@ -613,13 +689,20 @@ fn log_turn_latency(
         .unwrap_or(turn_started_at);
 
     let stt_speech_duration_ms = timing.as_ref().and_then(|t| {
-        t.speech_started_at
-            .map(|s| t.last_audio_at.unwrap_or(t.transcript_received_at).saturating_duration_since(s).as_millis())
+        t.speech_started_at.map(|s| {
+            t.last_audio_at
+                .unwrap_or(t.transcript_received_at)
+                .saturating_duration_since(s)
+                .as_millis()
+        })
     });
 
     let stt_endpointing_ms = timing.as_ref().and_then(|t| {
-        t.last_audio_at
-            .map(|a| t.transcript_received_at.saturating_duration_since(a).as_millis())
+        t.last_audio_at.map(|a| {
+            t.transcript_received_at
+                .saturating_duration_since(a)
+                .as_millis()
+        })
     });
 
     let queue_wait_ms = turn_started_at.duration_since(transcript_rx_at).as_millis();
@@ -628,11 +711,9 @@ fn log_turn_latency(
     let llm_ttfs_ms = first_sentence_at.map(|fs| fs.duration_since(llm_request_start).as_millis());
     let tts_ttfb_ms = first_tts_ttfb_ms;
 
-    // Time from transcript received to first audio dispatched to Twilio (pipeline latency)
     let time_to_first_audio_ms =
         first_audio_sent_at.map(|fa| fa.duration_since(transcript_rx_at).as_millis());
 
-    // Time from caller stopped speaking to first audio dispatched to Twilio (user perceived delay)
     let user_perceived_delay_ms = timing.as_ref().and_then(|t| {
         t.last_audio_at
             .and_then(|la| first_audio_sent_at.map(|fa| fa.duration_since(la).as_millis()))
@@ -642,7 +723,6 @@ fn log_turn_latency(
         .duration_since(transcript_rx_at)
         .as_millis();
 
-    // 1. Structured trace log for monitoring and metrics aggregation
     tracing::info!(
         turn = number,
         conversation_id = %context.external_conversation_id,
@@ -661,7 +741,6 @@ fn log_turn_latency(
         "VOICE_PIPELINE_METRICS"
     );
 
-    // 2. High-visibility summary card for prompt benchmark reports
     let stt_speech_str = stt_speech_duration_ms
         .map(|ms| format!("{ms} ms"))
         .unwrap_or_else(|| "N/A".into());
@@ -930,15 +1009,42 @@ mod tests {
         let (providers, event_tx, _, agent, _) = providers();
         let (input_tx, input_rx) = mpsc::channel(8);
         let (output_tx, mut output_rx) = mpsc::channel(16);
-        let session = tokio::spawn(run_voice_session(providers, call_context(), input_rx, output_tx));
-        event_tx.send(SttEvent::FinalTranscript("list my tasks".into())).await.unwrap();
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
+        event_tx
+            .send(SttEvent::FinalTranscript("list my tasks".into()))
+            .await
+            .unwrap();
         event_tx.send(SttEvent::SpeechStarted).await.unwrap();
-        event_tx.send(SttEvent::FinalTranscript("for tomorrow".into())).await.unwrap();
-        for _ in 0..3 { tokio::time::timeout(Duration::from_secs(2), output_rx.recv()).await.unwrap().unwrap(); }
-        assert_eq!(*agent.transcripts.lock().await, vec!["list my tasks for tomorrow"]);
-        input_tx.send(CallEvent::PlaybackFinished("response-0".into())).await.unwrap();
+        event_tx
+            .send(SttEvent::FinalTranscript("for tomorrow".into()))
+            .await
+            .unwrap();
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(2), output_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(
+            *agent.transcripts.lock().await,
+            vec!["list my tasks for tomorrow"]
+        );
+        input_tx
+            .send(CallEvent::PlaybackFinished("response-0".into()))
+            .await
+            .unwrap();
         event_tx.send(SttEvent::SpeechStarted).await.unwrap();
-        assert_eq!(tokio::time::timeout(Duration::from_secs(1), output_rx.recv()).await.unwrap(), Some(CallCommand::Clear));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), output_rx.recv())
+                .await
+                .unwrap(),
+            Some(CallCommand::Clear)
+        );
         input_tx.send(CallEvent::Stop).await.unwrap();
         session.await.unwrap().unwrap();
     }
@@ -1115,7 +1221,6 @@ mod tests {
             Some(CallCommand::Media(Bytes::from_static(&[3, 4])))
         );
 
-        // Send two frames of high-energy speech audio (0x90 expands to ~2000 linear RMS)
         input_tx
             .send(CallEvent::Audio(Bytes::from(vec![0x90; 160])))
             .await
@@ -1140,15 +1245,38 @@ mod tests {
         *agent.first_gate.lock().await = Some(Arc::new(Notify::new()));
         let (input_tx, input_rx) = mpsc::channel(8);
         let (output_tx, mut output_rx) = mpsc::channel(16);
-        let session = tokio::spawn(run_voice_session(providers, call_context(), input_rx, output_tx));
-        event_tx.send(SttEvent::FinalTranscript("first".into())).await.unwrap();
+        let session = tokio::spawn(run_voice_session(
+            providers,
+            call_context(),
+            input_rx,
+            output_tx,
+        ));
+        event_tx
+            .send(SttEvent::FinalTranscript("first".into()))
+            .await
+            .unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
-            while agent.transcripts.lock().await.is_empty() { tokio::task::yield_now().await; }
-        }).await.unwrap();
+            while agent.transcripts.lock().await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         event_tx.send(SttEvent::SpeechStarted).await.unwrap();
-        event_tx.send(SttEvent::FinalTranscript("Actually, second".into())).await.unwrap();
-        for _ in 0..3 { tokio::time::timeout(Duration::from_secs(2), output_rx.recv()).await.unwrap().unwrap(); }
-        assert_eq!(*agent.transcripts.lock().await, vec!["first", "Actually, second"]);
+        event_tx
+            .send(SttEvent::FinalTranscript("Actually, second".into()))
+            .await
+            .unwrap();
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(2), output_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(
+            *agent.transcripts.lock().await,
+            vec!["first", "Actually, second"]
+        );
         input_tx.send(CallEvent::Stop).await.unwrap();
         session.await.unwrap().unwrap();
     }
@@ -1204,7 +1332,6 @@ mod tests {
             .unwrap();
 
         let mut commands = Vec::new();
-        // 2 chunks for first sentence, 2 chunks for second sentence, 1 mark
         for _ in 0..5 {
             commands.push(output_rx.recv().await.unwrap());
         }

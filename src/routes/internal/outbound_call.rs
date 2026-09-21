@@ -56,7 +56,6 @@ pub async fn handle_outbound_call(
 
     let action_str = payload.action_id.to_string();
 
-    // Idempotency check: if action was already accepted and has a Call SID, return it
     for entry in state.twilio.iter() {
         if entry.value().action_id.as_deref() == Some(&action_str) {
             return (

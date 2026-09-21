@@ -60,7 +60,6 @@ impl TtsProvider for SarvamTts {
         if trimmed.is_empty() {
             return Err(VoiceError::Protocol("empty TTS input".into()));
         }
-        // Sarvam requires at least one character from allowed languages (alphabetic)
         if !trimmed.chars().any(|c| c.is_alphabetic()) {
             tracing::warn!(text = %trimmed, "Skipping Sarvam TTS for text without alphabetic characters");
             return Ok(Box::pin(futures_util::stream::empty()));

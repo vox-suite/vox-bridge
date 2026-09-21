@@ -66,7 +66,7 @@ pub struct BridgeJevClient {
 impl BridgeJevClient {
     pub fn new(api_key: String, endpoint: Option<String>) -> Self {
         let http = Client::builder()
-            .timeout(Duration::from_millis(800)) // fast edge timeout
+            .timeout(Duration::from_millis(800))
             .tcp_nodelay(true)
             .build()
             .unwrap_or_default();

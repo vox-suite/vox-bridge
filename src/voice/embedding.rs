@@ -15,17 +15,23 @@ pub struct SpeechAccumulator {
 }
 
 impl SpeechAccumulator {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn push_frame(&mut self, frame: &[u8]) {
-        if calculate_rms(frame) < 250.0 { return; }
+        if calculate_rms(frame) < 250.0 {
+            return;
+        }
         let frame = &frame[frame.len().saturating_sub(MAX_SAMPLES)..];
         let excess = (self.accumulated_mulaw.len() + frame.len()).saturating_sub(MAX_SAMPLES);
         self.accumulated_mulaw.drain(..excess);
         self.accumulated_mulaw.extend_from_slice(frame);
     }
 
-    pub fn take_audio(&mut self) -> Vec<u8> { std::mem::take(&mut self.accumulated_mulaw) }
+    pub fn take_audio(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.accumulated_mulaw)
+    }
 }
 
 struct SpeakerModel {
@@ -37,8 +43,12 @@ struct SpeakerModel {
 static MODEL: OnceLock<Option<SpeakerModel>> = OnceLock::new();
 
 pub fn initialize_speaker_model() -> Result<(), String> {
-    if MODEL.get().is_some() { return Ok(()); }
-    let path = std::env::var("VOX_SPEAKER_ONNX_PATH").ok().filter(|p| !p.trim().is_empty())
+    if MODEL.get().is_some() {
+        return Ok(());
+    }
+    let path = std::env::var("VOX_SPEAKER_ONNX_PATH")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
         .or_else(|| {
             if std::path::Path::new("/models/speaker.onnx").exists() {
                 Some("/models/speaker.onnx".into())
@@ -60,47 +70,89 @@ pub fn initialize_speaker_model() -> Result<(), String> {
 
 impl SpeakerModel {
     fn load(path: &str, input: &str) -> Result<Self, String> {
-        if !matches!(input, "waveform" | "fbank") { return Err("VOX_SPEAKER_INPUT must be waveform or fbank".into()); }
+        if !matches!(input, "waveform" | "fbank") {
+            return Err("VOX_SPEAKER_INPUT must be waveform or fbank".into());
+        }
         let bytes = std::fs::read(path).map_err(|e| format!("speaker model file: {e}"))?;
-        let identity = format!("onnx-sha256:{:x}", Sha256::digest([bytes.as_slice(), input.as_bytes(), b"vox-audio-v2"].concat()));
-        let session = Session::builder().and_then(|builder| builder.with_intra_threads(1))
-            .and_then(|builder| builder.commit_from_memory(&bytes)).map_err(|e| format!("speaker model load: {e}"))?;
-        if session.inputs.len() != 1 || session.outputs.len() != 1 { return Err("speaker model must have one float input and one embedding output".into()); }
-        Ok(Self { session: Mutex::new(session), identity, fbank: input == "fbank" })
+        let identity = format!(
+            "onnx-sha256:{:x}",
+            Sha256::digest([bytes.as_slice(), input.as_bytes(), b"vox-audio-v2"].concat())
+        );
+        let session = Session::builder()
+            .and_then(|builder| builder.with_intra_threads(1))
+            .and_then(|builder| builder.commit_from_memory(&bytes))
+            .map_err(|e| format!("speaker model load: {e}"))?;
+        if session.inputs.len() != 1 || session.outputs.len() != 1 {
+            return Err("speaker model must have one float input and one embedding output".into());
+        }
+        Ok(Self {
+            session: Mutex::new(session),
+            identity,
+            fbank: input == "fbank",
+        })
     }
 
     fn extract(&self, audio: &[u8]) -> Result<Option<String>, String> {
-        if audio.len() < MIN_SAMPLES { return Ok(None); }
+        if audio.len() < MIN_SAMPLES {
+            return Ok(None);
+        }
         let waveform = mulaw_8k_to_linear_16k(audio);
         let (shape, values) = if self.fbank {
             let values = compute_fbank(&waveform);
             (vec![1, values.len() / BINS, BINS], values)
-        } else { (vec![1, waveform.len()], waveform) };
+        } else {
+            (vec![1, waveform.len()], waveform)
+        };
         let input = Tensor::from_array((shape, values)).map_err(|e| e.to_string())?;
-        let mut session = self.session.lock().map_err(|_| "speaker session poisoned")?;
-        let outputs = session.run(ort::inputs![input]).map_err(|e| e.to_string())?;
-        let (_, features) = outputs[0].try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
-        let Some(features) = normalize_embedding(features) else { return Ok(None); };
-        Ok(Some(serde_json::json!({
-            "features": features, "sample_count": 1,
-            "sample_duration_ms": audio.len() / 8, "model": self.identity,
-        }).to_string()))
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|_| "speaker session poisoned")?;
+        let outputs = session
+            .run(ort::inputs![input])
+            .map_err(|e| e.to_string())?;
+        let (_, features) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| e.to_string())?;
+        let Some(features) = normalize_embedding(features) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            serde_json::json!({
+                "features": features, "sample_count": 1,
+                "sample_duration_ms": audio.len() / 8, "model": self.identity,
+            })
+            .to_string(),
+        ))
     }
 }
 
 pub fn extract_audio_signature(audio: Vec<u8>) -> Option<String> {
-    if audio.len() < MIN_SAMPLES { return None; }
+    if audio.len() < MIN_SAMPLES {
+        return None;
+    }
     let model = MODEL.get()?.as_ref()?;
     match model.extract(&audio) {
         Ok(signature) => signature,
-        Err(error) => { tracing::warn!(%error, "VOICE_EMBEDDING_INCONCLUSIVE"); None }
+        Err(error) => {
+            tracing::warn!(%error, "VOICE_EMBEDDING_INCONCLUSIVE");
+            None
+        }
     }
 }
 
 fn normalize_embedding(features: &[f32]) -> Option<Vec<f32>> {
-    if features.len() < 16 || features.len() > 4096 || features.iter().any(|v| !v.is_finite()) { return None; }
-    let norm = features.iter().map(|v| (*v as f64).powi(2)).sum::<f64>().sqrt();
-    if norm < 1e-12 || !norm.is_finite() { return None; }
+    if features.len() < 16 || features.len() > 4096 || features.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    let norm = features
+        .iter()
+        .map(|v| (*v as f64).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    if norm < 1e-12 || !norm.is_finite() {
+        return None;
+    }
     Some(features.iter().map(|v| (*v as f64 / norm) as f32).collect())
 }
 
@@ -125,17 +177,29 @@ static FBANK: LazyLock<Fbank> = LazyLock::new(|| {
     let mel = |hz: f32| 1127.0 * (1.0 + hz / 700.0).ln();
     let low = mel(20.0);
     let step = (mel(8000.0) - low) / (BINS + 1) as f32;
-    let filters = (0..BINS).map(|bin| {
-        let left = low + bin as f32 * step;
-        let center = left + step;
-        let right = center + step;
-        (0..=FFT_SIZE / 2).map(|k| {
-            let frequency = mel(k as f32 * 16000.0 / FFT_SIZE as f32);
-            ((frequency - left) / (center - left)).min((right - frequency) / (right - center)).max(0.0)
-        }).collect()
-    }).collect();
-    let window = (0..400).map(|i| (0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / 399.0).cos()).powf(0.85)).collect();
-    Fbank { fft: FftPlanner::new().plan_fft_forward(FFT_SIZE), filters, window }
+    let filters = (0..BINS)
+        .map(|bin| {
+            let left = low + bin as f32 * step;
+            let center = left + step;
+            let right = center + step;
+            (0..=FFT_SIZE / 2)
+                .map(|k| {
+                    let frequency = mel(k as f32 * 16000.0 / FFT_SIZE as f32);
+                    ((frequency - left) / (center - left))
+                        .min((right - frequency) / (right - center))
+                        .max(0.0)
+                })
+                .collect()
+        })
+        .collect();
+    let window = (0..400)
+        .map(|i| (0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / 399.0).cos()).powf(0.85))
+        .collect();
+    Fbank {
+        fft: FftPlanner::new().plan_fft_forward(FFT_SIZE),
+        filters,
+        window,
+    }
 });
 
 fn compute_fbank(waveform: &[f32]) -> Vec<f32> {
@@ -153,15 +217,24 @@ fn compute_fbank(waveform: &[f32]) -> Vec<f32> {
         }
         FBANK.fft.process_with_scratch(&mut spectrum, &mut scratch);
         for filter in &FBANK.filters {
-            let power = filter.iter().zip(&spectrum).map(|(weight, value)| weight * value.norm_sqr()).sum::<f32>();
+            let power = filter
+                .iter()
+                .zip(&spectrum)
+                .map(|(weight, value)| weight * value.norm_sqr())
+                .sum::<f32>();
             output.push(power.max(f32::EPSILON).ln());
         }
     }
     let frames = output.len() / BINS;
     if frames > 0 {
         for bin in 0..BINS {
-            let mean = (0..frames).map(|frame| output[frame * BINS + bin]).sum::<f32>() / frames as f32;
-            for frame in 0..frames { output[frame * BINS + bin] -= mean; }
+            let mean = (0..frames)
+                .map(|frame| output[frame * BINS + bin])
+                .sum::<f32>()
+                / frames as f32;
+            for frame in 0..frames {
+                output[frame * BINS + bin] -= mean;
+            }
         }
     }
     output
@@ -202,7 +275,10 @@ mod tests {
         assert_eq!(features.len(), 98 * BINS);
         assert!(features.iter().all(|v| v.is_finite()));
         for bin in 0..BINS {
-            let mean = (0..98).map(|frame| features[frame * BINS + bin]).sum::<f32>() / 98.0;
+            let mean = (0..98)
+                .map(|frame| features[frame * BINS + bin])
+                .sum::<f32>()
+                / 98.0;
             assert!(mean.abs() < 0.0001);
         }
     }

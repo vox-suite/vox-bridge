@@ -140,9 +140,12 @@ fn parse_event(raw: &str) -> Result<Option<SttEvent>, VoiceError> {
             provider: "assemblyai",
             message: format!("streaming error {error_code}: {error}"),
         }),
-        AssemblyEvent::Turn { end_of_turn: false, transcript } if !transcript.trim().is_empty() => {
-            Ok(Some(SttEvent::PartialTranscript(transcript.trim().to_owned())))
-        }
+        AssemblyEvent::Turn {
+            end_of_turn: false,
+            transcript,
+        } if !transcript.trim().is_empty() => Ok(Some(SttEvent::PartialTranscript(
+            transcript.trim().to_owned(),
+        ))),
         AssemblyEvent::Turn { .. } | AssemblyEvent::Other => Ok(None),
     }
 }
@@ -241,7 +244,10 @@ mod tests {
             parse_event(final_turn).unwrap(),
             Some(SttEvent::FinalTranscript("Book a table".into()))
         );
-        assert_eq!(parse_event(partial).unwrap(), Some(SttEvent::PartialTranscript("Book".into())));
+        assert_eq!(
+            parse_event(partial).unwrap(),
+            Some(SttEvent::PartialTranscript("Book".into()))
+        );
         assert_eq!(parse_event(empty).unwrap(), None);
     }
 

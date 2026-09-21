@@ -107,9 +107,8 @@ pub fn transcode_mp3_to_mulaw_stream<S>(
 where
     S: Stream<Item = Result<Bytes, VoiceError>> + Send + 'static,
 {
-    let io_stream = Box::pin(input.map(|res| {
-        res.map_err(|e| std::io::Error::other(e.to_string()))
-    }));
+    let io_stream =
+        Box::pin(input.map(|res| res.map_err(|e| std::io::Error::other(e.to_string()))));
     let reader = CoalescingReader {
         inner: StreamReader::new(io_stream),
     };
@@ -145,9 +144,7 @@ where
                     }
                 }
                 Err(minimp3::Error::Eof) => break,
-                Err(minimp3::Error::Io(err))
-                    if err.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
+                Err(minimp3::Error::Io(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
                     break;
                 }
                 Err(err) => {

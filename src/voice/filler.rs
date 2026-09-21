@@ -4,14 +4,10 @@ use dashmap::DashMap;
 use futures_util::StreamExt;
 use std::sync::{Arc, LazyLock};
 
-/// Global in-memory cache for pre-rendered G.711 μ-law filler audio frames.
-/// Once synthesized or pre-warmed, subsequent turns stream audio directly from RAM in <1ms.
 pub static FILLER_CACHE: LazyLock<DashMap<&'static str, Vec<Bytes>>> = LazyLock::new(DashMap::new);
 
-/// List of all standard static filler phrases used across domains for pre-warming.
 pub const PREWARM_FILLERS: &[&str] = &["I'm looking into that."];
 
-/// Pre-warms the Sarvam TTS HTTP connection and primes the in-memory audio cache.
 pub fn prewarm_fillers(tts: Arc<dyn TtsProvider>) {
     tokio::spawn(async move {
         for &phrase in PREWARM_FILLERS {
@@ -35,7 +31,6 @@ pub fn prewarm_fillers(tts: Arc<dyn TtsProvider>) {
     });
 }
 
-/// Synthesizes or retrieves cached audio for a spoken filler phrase, streaming chunks to Twilio.
 pub async fn play_filler(
     phrase: &'static str,
     tts: &dyn TtsProvider,
@@ -45,7 +40,6 @@ pub async fn play_filler(
 ) -> Result<u128, VoiceError> {
     let start = std::time::Instant::now();
 
-    // 1. Instant cache hit from memory (0ms TTFA)
     let cached = FILLER_CACHE.get(phrase).map(|entry| entry.value().clone());
     if let Some(cached_chunks) = cached {
         let mut ttfb_ms = 0;
@@ -72,7 +66,6 @@ pub async fn play_filler(
         return Ok(ttfb_ms);
     }
 
-    // 2. Cache miss: synthesize via TTS provider and populate cache
     let text = phrase.trim();
     if text.is_empty() || !text.chars().any(|c| c.is_alphabetic()) {
         return Ok(0);
@@ -119,8 +112,6 @@ pub async fn play_filler(
     Ok(ttfb_ms)
 }
 
-/// Strips duplicate leading conversational acknowledgments from
-/// the core LLM response if an immediate filler was already played aloud.
 pub fn strip_leading_ack(sentence: &str) -> &str {
     let trimmed = sentence.trim_start();
     let effective = if trimmed.starts_with('[') {
@@ -247,10 +238,7 @@ mod tests {
             strip_leading_ack("[thoughtful] Apple is trading at ."),
             "[thoughtful] Apple is trading at ."
         );
-        assert_eq!(
-            strip_leading_ack("[thoughtful] Got it."),
-            ""
-        );
+        assert_eq!(strip_leading_ack("[thoughtful] Got it."), "");
     }
 
     #[tokio::test]
@@ -275,7 +263,6 @@ mod tests {
         let mut first_audio = None;
         let playing = AtomicBool::new(false);
 
-        // First call: populates cache
         let ttfb1 = play_filler(phrase, &tts, &output_tx, &mut first_audio, &playing)
             .await
             .unwrap();
@@ -286,7 +273,6 @@ mod tests {
             crate::voice::session::CallCommand::Media(Bytes::from_static(&[0xaa, 0xbb]))
         );
 
-        // Second call: instant cache hit (<5ms)
         let mut first_audio2 = None;
         let ttfb2 = play_filler(phrase, &tts, &output_tx, &mut first_audio2, &playing)
             .await

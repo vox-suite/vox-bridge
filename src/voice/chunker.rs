@@ -10,13 +10,11 @@ impl SentenceChunker {
         }
     }
 
-    /// Appends a new text chunk to the buffer and extracts any completed sentences.
     pub fn push(&mut self, chunk: &str) -> Vec<String> {
         self.buffer.push_str(chunk);
         self.drain_sentences(false)
     }
 
-    /// Flushes any remaining uncompleted text in the buffer as a final sentence.
     pub fn flush(&mut self) -> Option<String> {
         let remaining = self.buffer.trim().to_string();
         self.buffer.clear();
@@ -42,7 +40,6 @@ impl SentenceChunker {
         sentences
     }
 
-    /// Finds the byte index immediately after the earliest sentence boundary.
     fn find_sentence_boundary(&self) -> Option<usize> {
         let bytes = self.buffer.as_bytes();
         let len = bytes.len();
@@ -68,13 +65,10 @@ impl SentenceChunker {
 
             let current_words = word_count + if in_word { 1 } else { 0 };
 
-            // Check for sentence terminators: '.', '!', '?'
             if b == b'.' || b == b'!' || b == b'?' {
                 let next_is_boundary = if i + 1 < len {
                     bytes[i + 1].is_ascii_whitespace()
                 } else {
-                    // Trailing boundary: '!' and '?' are unambiguous sentence terminators.
-                    // '.' is a boundary unless preceded by a digit, dot, or abbreviation.
                     if b == b'!' || b == b'?' {
                         true
                     } else if b == b'.' {
@@ -88,11 +82,9 @@ impl SentenceChunker {
                 };
 
                 if next_is_boundary {
-                    // For long sentences (>= 14 words), prioritize splitting at earlier clause boundary for lower latency
                     if current_words >= 14 && last_clause_boundary.is_some() {
                         return last_clause_boundary;
                     }
-                    // Ignore decimal numbers, e.g. "3.5" or "10.0"
                     if b == b'.' && i > 0 && i + 1 < len {
                         let prev = bytes[i - 1];
                         let next = bytes[i + 1];
@@ -101,7 +93,6 @@ impl SentenceChunker {
                         }
                     }
 
-                    // Ignore ellipsis "..."
                     if b == b'.'
                         && ((i > 0 && bytes[i - 1] == b'.')
                             || (i + 1 < len && bytes[i + 1] == b'.'))
@@ -109,12 +100,10 @@ impl SentenceChunker {
                         continue;
                     }
 
-                    // Ignore common abbreviations if it's a period
                     if b == b'.' && is_abbreviation(&self.buffer[..i]) {
                         continue;
                     }
 
-                    // Include trailing quotes or closing brackets if any
                     let mut end_idx = i + 1;
                     while end_idx < len
                         && (bytes[end_idx] == b'"'
@@ -134,7 +123,6 @@ impl SentenceChunker {
                 }
             }
 
-            // Clause split fallback: If an unclosed sentence has >= 7 words and hits a comma/semicolon/colon
             if (b == b',' || b == b';' || b == b':')
                 && current_words >= 7
                 && i + 1 < len
@@ -144,7 +132,6 @@ impl SentenceChunker {
             }
         }
 
-        // If a sentence is unusually long (>= 14 words) with no period, split at the clause boundary
         let total_words = word_count + if in_word { 1 } else { 0 };
         if total_words >= 14 && last_clause_boundary.is_some() {
             return last_clause_boundary;
@@ -197,7 +184,6 @@ mod tests {
         let mut chunker = SentenceChunker::new();
         assert_eq!(chunker.push("Hello "), Vec::<String>::new());
         assert_eq!(chunker.push("Rahul! How "), vec!["Hello Rahul!"]);
-        // Immediate boundary emission on terminal punctuation (? or !) ensures zero latency lag
         assert_eq!(chunker.push("are you?"), vec!["How are you?"]);
         assert_eq!(chunker.flush(), None);
     }

@@ -84,11 +84,8 @@ impl VoiceRuntime {
             profile.stt.model.clone(),
         ));
         let agent: Arc<dyn AgentProvider> = Arc::new(
-            CoreAgentClient::new(
-                config.secrets.core_url,
-                config.secrets.core_service_token,
-            )?
-            .with_tts_provider(profile.tts.provider.clone()),
+            CoreAgentClient::new(config.secrets.core_url, config.secrets.core_service_token)?
+                .with_tts_provider(profile.tts.provider.clone()),
         );
         let tts: Arc<dyn TtsProvider> = match profile.tts.provider.as_str() {
             "sarvam" => {
@@ -109,10 +106,9 @@ impl VoiceRuntime {
                 ))
             }
             "elevenlabs" => {
-                let api_key = config
-                    .secrets
-                    .elevenlabs_api_key
-                    .ok_or_else(|| VoiceError::Configuration("ELEVENLABS_API_KEY is missing".into()))?;
+                let api_key = config.secrets.elevenlabs_api_key.ok_or_else(|| {
+                    VoiceError::Configuration("ELEVENLABS_API_KEY is missing".into())
+                })?;
                 let endpoint = "https://api.elevenlabs.io".to_string();
                 let output_format = std::env::var("ELEVENLABS_OUTPUT_FORMAT")
                     .unwrap_or_else(|_| "mp3_44100_128".to_string());

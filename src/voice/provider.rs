@@ -63,13 +63,24 @@ pub trait AgentProvider: Send + Sync {
             async move { Ok(text) },
         )))
     }
-    async fn respond_events(&self, context: &CallContext, transcript: &str) -> Result<AgentEventStream, VoiceError> {
+
+    async fn respond_events(
+        &self,
+        context: &CallContext,
+        transcript: &str,
+    ) -> Result<AgentEventStream, VoiceError> {
         use futures_util::StreamExt;
-        Ok(Box::pin(self.respond_stream(context, transcript).await?.map(|result| result.map(AgentEvent::Text))))
+        Ok(Box::pin(
+            self.respond_stream(context, transcript)
+                .await?
+                .map(|result| result.map(AgentEvent::Text)),
+        ))
     }
+
     async fn speculate(&self, _context: &CallContext, _transcript: &str) -> Result<(), VoiceError> {
         Ok(())
     }
+
     async fn complete(&self, _context: &CallContext) -> Result<(), VoiceError> {
         Ok(())
     }

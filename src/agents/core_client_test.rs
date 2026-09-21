@@ -26,8 +26,8 @@ async fn sends_authenticated_call_context_to_core() {
         external_conversation_id: "CA123".into(),
         initiation_context: None,
         voice_signature: None,
-            turn_id: None,
-            revision: None,
+        turn_id: None,
+        revision: None,
         tts_provider: None,
     };
 
@@ -62,8 +62,8 @@ async fn streams_sse_tokens_from_core_stream_endpoint() {
         external_conversation_id: "CA123".into(),
         initiation_context: None,
         voice_signature: None,
-            turn_id: None,
-            revision: None,
+        turn_id: None,
+        revision: None,
         tts_provider: None,
     };
 
@@ -94,8 +94,8 @@ async fn stream_falls_back_to_unary_when_stream_endpoint_returns_404() {
         external_conversation_id: "CA123".into(),
         initiation_context: None,
         voice_signature: None,
-            turn_id: None,
-            revision: None,
+        turn_id: None,
+        revision: None,
         tts_provider: None,
     };
 
