@@ -37,7 +37,9 @@ pub struct VoiceProfile {
 pub(crate) struct VoiceSecrets {
     pub assemblyai_api_key: String,
     pub core_url: String,
-    pub core_service_token: String,
+    pub core_host_credential_id: String,
+    pub core_host_audience: String,
+    pub core_host_secret: String,
     pub sarvam_api_key: Option<String>,
     pub elevenlabs_api_key: Option<String>,
 }
@@ -55,7 +57,9 @@ impl VoiceConfig {
             "VOX_TTS_PROVIDER",
             "ASSEMBLYAI_API_KEY",
             "ASSEMBLYAI_SPEECH_MODEL",
-            "VOX_CORE_SERVICE_TOKEN",
+            "VOX_CORE_HOST_CREDENTIAL_ID",
+            "VOX_CORE_HOST_AUDIENCE",
+            "VOX_CORE_HOST_SECRET",
             "SARVAM_API_KEY",
             "SARVAM_TTS_MODEL",
             "SARVAM_LANGUAGE_CODE",
@@ -84,7 +88,9 @@ impl VoiceConfig {
         let core_url = get("VOX_CORE_URL")
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(default_core_url);
-        let core_service_token = required(&get, "VOX_CORE_SERVICE_TOKEN")?;
+        let core_host_credential_id = required(&get, "VOX_CORE_HOST_CREDENTIAL_ID")?;
+        let core_host_audience = required(&get, "VOX_CORE_HOST_AUDIENCE")?;
+        let core_host_secret = required(&get, "VOX_CORE_HOST_SECRET")?;
 
         let (tts_model, speaker, pace, language_code, sarvam_api_key, elevenlabs_api_key) =
             match tts_provider.as_str() {
@@ -161,7 +167,9 @@ impl VoiceConfig {
             secrets: VoiceSecrets {
                 assemblyai_api_key,
                 core_url,
-                core_service_token,
+                core_host_credential_id,
+                core_host_audience,
+                core_host_secret,
                 sarvam_api_key,
                 elevenlabs_api_key,
             },
@@ -234,7 +242,15 @@ mod tests {
         HashMap::from([
             ("ASSEMBLYAI_API_KEY".into(), "assembly-key".into()),
             ("VOX_CORE_URL".into(), "http://core-api:3001".into()),
-            ("VOX_CORE_SERVICE_TOKEN".into(), "service-token".into()),
+            (
+                "VOX_CORE_HOST_CREDENTIAL_ID".into(),
+                "f7f90d3d-5ded-4acf-850f-650bcb965fd1".into(),
+            ),
+            (
+                "VOX_CORE_HOST_AUDIENCE".into(),
+                "vox-host:development:bridge".into(),
+            ),
+            ("VOX_CORE_HOST_SECRET".into(), "host-secret".into()),
             ("ELEVENLABS_API_KEY".into(), "eleven-key".into()),
         ])
     }
@@ -340,7 +356,9 @@ mod tests {
     fn rejects_missing_provider_credentials() {
         for key in [
             "ASSEMBLYAI_API_KEY",
-            "VOX_CORE_SERVICE_TOKEN",
+            "VOX_CORE_HOST_CREDENTIAL_ID",
+            "VOX_CORE_HOST_AUDIENCE",
+            "VOX_CORE_HOST_SECRET",
             "ELEVENLABS_API_KEY",
         ] {
             let mut values = valid_values();

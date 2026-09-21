@@ -132,6 +132,9 @@ pub async fn wa_receive(
                             else {
                                 continue;
                             };
+                            let Some(from) = crate::voice::context::normalized_e164(&from) else {
+                                continue;
+                            };
                             let context = CallContext {
                                 channel: "whatsapp".into(),
                                 external_identity: from.clone(),

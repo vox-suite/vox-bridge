@@ -84,8 +84,13 @@ impl VoiceRuntime {
             profile.stt.model.clone(),
         ));
         let agent: Arc<dyn AgentProvider> = Arc::new(
-            CoreAgentClient::new(config.secrets.core_url, config.secrets.core_service_token)?
-                .with_tts_provider(profile.tts.provider.clone()),
+            CoreAgentClient::new(
+                config.secrets.core_url,
+                config.secrets.core_host_credential_id,
+                config.secrets.core_host_audience,
+                config.secrets.core_host_secret,
+            )?
+            .with_tts_provider(profile.tts.provider.clone()),
         );
         let tts: Arc<dyn TtsProvider> = match profile.tts.provider.as_str() {
             "sarvam" => {
@@ -156,9 +161,14 @@ mod tests {
             ("ASSEMBLYAI_API_KEY".to_owned(), "assembly-key".to_owned()),
             ("VOX_CORE_URL".to_owned(), "http://core-api:3001".to_owned()),
             (
-                "VOX_CORE_SERVICE_TOKEN".to_owned(),
-                "service-token".to_owned(),
+                "VOX_CORE_HOST_CREDENTIAL_ID".to_owned(),
+                "f7f90d3d-5ded-4acf-850f-650bcb965fd1".to_owned(),
             ),
+            (
+                "VOX_CORE_HOST_AUDIENCE".to_owned(),
+                "vox-host:development:bridge".to_owned(),
+            ),
+            ("VOX_CORE_HOST_SECRET".to_owned(), "host-secret".to_owned()),
             ("ELEVENLABS_API_KEY".to_owned(), "eleven-key".to_owned()),
         ]);
         VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap()
@@ -182,9 +192,14 @@ mod tests {
         let values = HashMap::from([
             ("ASSEMBLYAI_API_KEY".to_owned(), "assembly-key".to_owned()),
             (
-                "VOX_CORE_SERVICE_TOKEN".to_owned(),
-                "service-token".to_owned(),
+                "VOX_CORE_HOST_CREDENTIAL_ID".to_owned(),
+                "f7f90d3d-5ded-4acf-850f-650bcb965fd1".to_owned(),
             ),
+            (
+                "VOX_CORE_HOST_AUDIENCE".to_owned(),
+                "vox-host:development:bridge".to_owned(),
+            ),
+            ("VOX_CORE_HOST_SECRET".to_owned(), "host-secret".to_owned()),
             ("VOX_TTS_PROVIDER".to_owned(), "sarvam".to_owned()),
             ("SARVAM_API_KEY".to_owned(), "sarvam-key".to_owned()),
         ]);
