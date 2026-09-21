@@ -1,7 +1,36 @@
 api.voxagent.in {
+	# Block scanner / bot probes
+	@probes path /.env* /.git* /wp-* *.php /admin/*
+	respond @probes 403
+
+	# Admin routes to core-api
 	handle /v1/admin/redis* {
+		header Cache-Control "no-store"
 		reverse_proxy 127.0.0.1:3001
 	}
 
-	reverse_proxy 127.0.0.1:3000
+	# Explicit Voice Bridge routes
+	handle /bridge/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle /twilio/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle /ws* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle /health* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle /internal/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle_path / {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	# Default catch-all for unknown routes
+	handle {
+		respond "Not Found" 404
+	}
 }

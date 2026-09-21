@@ -71,11 +71,15 @@ impl VoiceActivityDetector {
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
             .unwrap_or(650.0);
+        let consecutive_onset = std::env::var("VOX_VAD_CONSECUTIVE_ONSET")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(2);
 
         Self {
             speech_threshold: threshold,
             noise_floor: 100.0,
-            consecutive_onset_required: 2,
+            consecutive_onset_required: consecutive_onset,
             consecutive_speech_frames: 0,
             hangover_frames_required: 12,
             silent_frame_count: 0,
@@ -88,10 +92,11 @@ impl VoiceActivityDetector {
     pub fn with_threshold(threshold: f32) -> Self {
         let mut vad = Self::new();
         vad.speech_threshold = threshold;
+        vad.consecutive_onset_required = 2;
         vad
     }
 
-    pub fn process_frame(&mut self, mulaw_audio: &[u8]) -> VadEvent {
+    pub fn process_frame_with_playback(&mut self, mulaw_audio: &[u8], is_playing: bool) -> VadEvent {
         if mulaw_audio.is_empty() {
             return if self.is_speaking {
                 VadEvent::SpeechActive
@@ -103,21 +108,29 @@ impl VoiceActivityDetector {
         let rms = calculate_rms(mulaw_audio);
         self.last_rms = rms;
 
-        let dynamic_threshold = (self.noise_floor * 2.5).max(self.speech_threshold);
+        let base_threshold = (self.noise_floor * 2.5).max(self.speech_threshold);
+        let dynamic_threshold = if is_playing {
+            base_threshold * 1.35
+        } else {
+            base_threshold
+        };
         let frame_is_speech = rms >= dynamic_threshold;
+
+        let required_onset = self.consecutive_onset_required;
 
         if frame_is_speech {
             self.consecutive_speech_frames += 1;
             self.silent_frame_count = 0;
 
             if !self.is_speaking {
-                if self.consecutive_speech_frames >= self.consecutive_onset_required {
+                if self.consecutive_speech_frames >= required_onset {
                     self.is_speaking = true;
                     tracing::info!(
                         rms = %self.last_rms,
                         threshold = %dynamic_threshold,
                         noise_floor = %self.noise_floor,
                         consecutive_frames = self.consecutive_speech_frames,
+                        is_playing,
                         "VAD: Speech onset detected (SpeechStarted)"
                     );
                     VadEvent::SpeechStarted
@@ -149,6 +162,11 @@ impl VoiceActivityDetector {
                 VadEvent::Silence
             }
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn process_frame(&mut self, mulaw_audio: &[u8]) -> VadEvent {
+        self.process_frame_with_playback(mulaw_audio, false)
     }
 
     #[inline]

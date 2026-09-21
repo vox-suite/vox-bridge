@@ -58,6 +58,8 @@ pub async fn run_voice_session(
         crate::voice::embedding::SpeechAccumulator::new(),
     ));
     let input_speech_accumulator = speech_accumulator.clone();
+    let audio_playing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let input_audio_playing = audio_playing.clone();
 
     let mut vad = crate::voice::vad::VoiceActivityDetector::new();
     let input_task = tokio::spawn(async move {
@@ -65,7 +67,8 @@ pub async fn run_voice_session(
             match event {
                 CallEvent::Audio(audio) => {
                     input_speech_accumulator.lock().unwrap().push_frame(&audio);
-                    let vad_event = vad.process_frame(&audio);
+                    let is_playing = input_audio_playing.load(std::sync::atomic::Ordering::Relaxed);
+                    let vad_event = vad.process_frame_with_playback(&audio, is_playing);
                     if vad.current_rms() >= vad.dynamic_threshold() {
                         *input_last_audio.lock().unwrap() = Some(std::time::Instant::now());
                     }
@@ -74,6 +77,7 @@ pub async fn run_voice_session(
                             rms = %vad.current_rms(),
                             threshold = %vad.dynamic_threshold(),
                             noise_floor = %vad.noise_floor(),
+                            is_playing,
                             "VAD: Inbound speech onset detected (SpeechStarted)"
                         );
                         let _ = input_signal.send(SessionSignal::SpeechDetected).await;
@@ -158,7 +162,6 @@ pub async fn run_voice_session(
     let mut speech_started_at: Option<std::time::Instant> = None;
     let mut caller_speaking = false;
     let mut failure = None;
-    let audio_playing = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let answer_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     if let Some(ref opening) = context.initiation_context {
