@@ -29,6 +29,8 @@ thiserror = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries", "copy-dylibs"] }
 rustfft = "6.4.1"
+minimp3 = { version = "0.6.1", features = ["async_tokio"] }
+tokio-util = { version = "0.7", features = ["io"] }
 
 # musl build only: compile OpenSSL from source so native-tls links statically
 # (mac uses Security.framework, so this is skipped locally)

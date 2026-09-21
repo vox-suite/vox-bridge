@@ -114,6 +114,8 @@ impl VoiceRuntime {
                     .elevenlabs_api_key
                     .ok_or_else(|| VoiceError::Configuration("ELEVENLABS_API_KEY is missing".into()))?;
                 let endpoint = "https://api.elevenlabs.io".to_string();
+                let output_format = std::env::var("ELEVENLABS_OUTPUT_FORMAT")
+                    .unwrap_or_else(|_| "mp3_44100_128".to_string());
                 Arc::new(ElevenLabsTts::new(
                     http,
                     api_key,
@@ -121,7 +123,7 @@ impl VoiceRuntime {
                     ElevenLabsSettings {
                         model: profile.tts.model.clone(),
                         voice_id: profile.tts.speaker.clone(),
-                        output_format: "ulaw_8000".into(),
+                        output_format,
                         voice_settings: None,
                     },
                 ))

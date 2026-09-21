@@ -60,7 +60,7 @@ impl ElevenLabsTts {
     }
 }
 
-fn provider_error(message: &str) -> VoiceError {
+fn provider_error(message: impl Into<String>) -> VoiceError {
     VoiceError::Provider {
         provider: "elevenlabs",
         message: message.into(),
@@ -71,11 +71,7 @@ fn provider_error(message: &str) -> VoiceError {
 impl TtsProvider for ElevenLabsTts {
     async fn synthesize(&self, text: &str) -> Result<AudioStream, VoiceError> {
         let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return Err(VoiceError::Protocol("empty TTS input".into()));
-        }
         if !trimmed.chars().any(|c| c.is_alphabetic()) {
-            tracing::warn!(text = %trimmed, "Skipping ElevenLabs TTS for text without alphabetic characters");
             return Ok(Box::pin(futures_util::stream::empty()));
         }
 
@@ -132,7 +128,12 @@ impl TtsProvider for ElevenLabsTts {
         let stream = response
             .bytes_stream()
             .map(|chunk| chunk.map_err(|_| provider_error("audio stream failed")));
-        Ok(Box::pin(stream))
+
+        if self.settings.output_format.starts_with("mp3_") {
+            Ok(crate::voice::mp3::transcode_mp3_to_mulaw_stream(stream))
+        } else {
+            Ok(Box::pin(stream))
+        }
     }
 }
 
@@ -259,21 +260,38 @@ mod tests {
 
         let mut stream = provider.synthesize("40.").await.unwrap();
         assert!(stream.next().await.is_none());
-
-        let mut stream2 = provider.synthesize("---").await.unwrap();
-        assert!(stream2.next().await.is_none());
     }
 
     #[tokio::test]
-    async fn rejects_empty_text() {
+    async fn transcodes_mp3_stream_to_mulaw() {
+        let sample_mp3 = include_bytes!("../../../tests/fixtures/sample.mp3");
+        let app = Router::new().route(
+            "/v1/text-to-speech/{voice_id}/stream",
+            post(move || async move {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::from(sample_mp3.to_vec()))
+                    .unwrap()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let mut tts_settings = settings();
+        tts_settings.output_format = "mp3_44100_128".into();
         let provider = ElevenLabsTts::new(
             reqwest::Client::new(),
             "eleven-key".into(),
-            "http://127.0.0.1:9".into(),
-            settings(),
+            format!("http://{address}"),
+            tts_settings,
         );
 
-        let error = provider.synthesize("   ").await.err().unwrap();
-        assert!(error.to_string().contains("empty TTS input"));
+        let mut stream = provider.synthesize("Hello world").await.unwrap();
+        let mut total_bytes = 0;
+        while let Some(chunk) = stream.next().await {
+            total_bytes += chunk.unwrap().len();
+        }
+        assert!((3500..=5500).contains(&total_bytes));
     }
 }

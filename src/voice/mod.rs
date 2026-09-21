@@ -3,9 +3,9 @@ pub mod config;
 pub mod context;
 pub mod embedding;
 pub mod filler;
+pub mod mp3;
 pub mod provider;
 pub mod registry;
 pub mod session;
-pub mod vad;
-
 pub mod turn;
+pub mod vad;
