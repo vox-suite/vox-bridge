@@ -12,14 +12,14 @@ use uuid::Uuid;
 #[derive(Deserialize)]
 pub struct OutboundCallPayload {
     pub action_id: Uuid,
-    pub identity: ChannelIdentityPayload,
+    pub recipient: ChannelRecipientPayload,
     pub reason: String,
     pub opening_instruction: String,
     pub conversation_id: Uuid,
 }
 
 #[derive(Deserialize)]
-pub struct ChannelIdentityPayload {
+pub struct ChannelRecipientPayload {
     pub channel: String,
     pub external_id: String,
 }
@@ -46,8 +46,8 @@ pub async fn handle_outbound_call(
     if !auth_valid {
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
-    if payload.identity.channel != "phone"
-        || payload.identity.external_id.trim().is_empty()
+    if payload.recipient.channel != "phone"
+        || payload.recipient.external_id.trim().is_empty()
         || payload.reason.trim().is_empty()
         || payload.opening_instruction.trim().is_empty()
     {
@@ -78,7 +78,7 @@ pub async fn handle_outbound_call(
 
     match telephony
         .initiate_call(
-            &payload.identity.external_id,
+            &payload.recipient.external_id,
             payload.action_id,
             payload.conversation_id,
             Some(&payload.opening_instruction),
@@ -91,7 +91,7 @@ pub async fn handle_outbound_call(
                 TwilioState {
                     call_sid: call_sid.clone(),
                     account_sid: state.twilio_account_sid.to_string(),
-                    from: payload.identity.external_id,
+                    from: payload.recipient.external_id,
                     to: state.twilio_from_number.to_string(),
                     call_status: Some("in_progress".into()),
                     opening_instruction: Some(payload.opening_instruction),

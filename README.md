@@ -63,8 +63,8 @@ Both requests validate `X-Twilio-Signature` before a call session is accepted.
 ## Core integration
 
 Vox Bridge no longer owns Gemini prompts or agent tools. It sends finalized
-Twilio and WhatsApp text turns to Vox Core with their channel identity and
-provider conversation identifier. Gemini, Exa, Google Maps, persistent memory,
+Twilio and WhatsApp text turns to Vox Core with signed host context, channel
+metadata, and provider conversation identifier. Gemini, Exa, Google Maps, persistent memory,
 and scheduling credentials belong to the Core service.
 
 Bridge is a registered Core host app. Register it once with Core, store the
@@ -75,8 +75,9 @@ and completion call; it never uses the Core service token for conversations.
 Rotate the Core host credential before replacing the Bridge secret, then revoke
 the old credential after the rollout. Core resolves channel principals as
 `twilio:<normalized-e164>` and `whatsapp:<normalized-e164>`; the same phone
-number is intentionally not linked across channels without a later explicit
-identity-linking flow.
+number is intentionally not linked across channels without a later explicit,
+proof-based identity-linking flow. Channel metadata never selects or creates an
+authoritative owner.
 
 Run `cargo test --locked`, strict Clippy, and a release build to verify locally.
 Tests use local network boundaries and do not call paid provider APIs. Local

@@ -74,14 +74,16 @@ impl CoreAgentClient {
         self
     }
 
-    fn host_context(&self, context: &CallContext) -> HostContext<'_> {
+    fn host_context(&self, context: &CallContext) -> Result<HostContext<'_>, VoiceError> {
         let normalized_phone = crate::voice::context::normalized_e164(&context.external_identity)
-            .unwrap_or_else(|| context.external_identity.clone());
-        HostContext {
+            .ok_or_else(|| {
+            configuration("channel sender identity is not a valid phone number")
+        })?;
+        Ok(HostContext {
             // Channel-prefixed contexts intentionally prevent implicit cross-channel linking.
             host_user_id: format!("{}:{normalized_phone}", context.channel),
             organization_external_key: None,
-        }
+        })
     }
 
     fn signed_request(
@@ -94,7 +96,7 @@ impl CoreAgentClient {
             .map_err(|_| configuration("system clock is before Unix epoch"))?
             .as_secs() as i64;
         let nonce = Uuid::new_v4();
-        let host_context = self.host_context(context);
+        let host_context = self.host_context(context)?;
         let canonical = canonical_assertion(
             self.host_credential_id,
             &self.host_audience,
@@ -120,12 +122,12 @@ impl CoreAgentClient {
 #[async_trait]
 impl AgentProvider for CoreAgentClient {
     async fn respond(&self, context: &CallContext, transcript: &str) -> Result<String, VoiceError> {
-        let host_context = self.host_context(context);
+        let host_context = self.host_context(context)?;
         let response = self
             .signed_request(self.client.post(&self.endpoint), context)?
             .json(&serde_json::json!({
                 "host_context": host_context,
-                "identity": {"channel": context.channel, "external_id": context.external_identity},
+                "channel": context.channel,
                 "external_conversation_id": context.external_conversation_id,
                 "text": transcript,
                 "initiation_context": context.initiation_context,
@@ -154,13 +156,13 @@ impl AgentProvider for CoreAgentClient {
     ) -> Result<AgentEventStream, VoiceError> {
         let stream_endpoint = format!("{}/v1/conversations/respond/stream", self.base_url);
         let start_time = std::time::Instant::now();
-        let host_context = self.host_context(context);
+        let host_context = self.host_context(context)?;
         let send_result = self
             .signed_request(self.client.post(&stream_endpoint), context)?
             .header("Accept", "text/event-stream")
             .json(&serde_json::json!({
                 "host_context": host_context,
-                "identity": {"channel": context.channel, "external_id": context.external_identity},
+                "channel": context.channel,
                 "external_conversation_id": context.external_conversation_id,
                 "text": transcript,
                 "initiation_context": context.initiation_context,
@@ -220,7 +222,7 @@ impl AgentProvider for CoreAgentClient {
     }
 
     async fn speculate(&self, context: &CallContext, transcript: &str) -> Result<(), VoiceError> {
-        let host_context = self.host_context(context);
+        let host_context = self.host_context(context)?;
         let response = self
             .signed_request(
                 self.client
@@ -230,7 +232,7 @@ impl AgentProvider for CoreAgentClient {
             .timeout(Duration::from_secs(6))
             .json(&serde_json::json!({
                 "host_context": host_context,
-                "identity": {"channel": context.channel, "external_id": context.external_identity},
+                "channel": context.channel,
                 "external_conversation_id": context.external_conversation_id,
                 "text": transcript, "turn_id": context.turn_id, "revision": context.revision,
                 "tts_provider": context.tts_provider.as_deref().or(self.tts_provider.as_deref())
@@ -246,15 +248,12 @@ impl AgentProvider for CoreAgentClient {
 
     async fn complete(&self, context: &CallContext) -> Result<(), VoiceError> {
         let endpoint = format!("{}/v1/conversations/complete", self.base_url);
-        let host_context = self.host_context(context);
+        let host_context = self.host_context(context)?;
         let response = self
             .signed_request(self.client.post(&endpoint), context)?
             .json(&serde_json::json!({
                 "host_context": host_context,
-                "identity": {
-                    "channel": &context.channel,
-                    "external_id": &context.external_identity,
-                },
+                "channel": context.channel,
                 "external_conversation_id": &context.external_conversation_id,
             }))
             .send()
