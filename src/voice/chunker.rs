@@ -1,3 +1,7 @@
+// this file code contains sentence chunking logic using unicode segmentation
+
+use unicode_segmentation::UnicodeSegmentation;
+
 #[derive(Debug, Default)]
 pub struct SentenceChunker {
     buffer: String,
@@ -48,22 +52,22 @@ impl SentenceChunker {
         }
 
         let mut word_count = 0usize;
-        let mut in_word = false;
         let mut last_clause_boundary: Option<usize> = None;
+
+        for (idx, bound) in self.buffer.split_word_bound_indices() {
+            if bound.chars().any(char::is_alphanumeric) {
+                word_count += 1;
+            }
+            if (bound == "," || bound == ";" || bound == ":") && word_count >= 7 {
+                let end = idx + bound.len();
+                if end < len && bytes[end].is_ascii_whitespace() {
+                    last_clause_boundary = Some(end);
+                }
+            }
+        }
 
         for i in 0..len {
             let b = bytes[i];
-
-            if b.is_ascii_whitespace() {
-                if in_word {
-                    word_count += 1;
-                    in_word = false;
-                }
-            } else {
-                in_word = true;
-            }
-
-            let current_words = word_count + if in_word { 1 } else { 0 };
 
             if b == b'.' || b == b'!' || b == b'?' {
                 let next_is_boundary = if i + 1 < len {
@@ -82,6 +86,7 @@ impl SentenceChunker {
                 };
 
                 if next_is_boundary {
+                    let current_words = self.buffer[..i].unicode_words().count();
                     if current_words >= 14 && last_clause_boundary.is_some() {
                         return last_clause_boundary;
                     }
@@ -122,17 +127,9 @@ impl SentenceChunker {
                     return Some(end_idx);
                 }
             }
-
-            if (b == b',' || b == b';' || b == b':')
-                && current_words >= 7
-                && i + 1 < len
-                && bytes[i + 1].is_ascii_whitespace()
-            {
-                last_clause_boundary = Some(i + 1);
-            }
         }
 
-        let total_words = word_count + if in_word { 1 } else { 0 };
+        let total_words = self.buffer.unicode_words().count();
         if total_words >= 14 && last_clause_boundary.is_some() {
             return last_clause_boundary;
         }
@@ -140,15 +137,15 @@ impl SentenceChunker {
     }
 }
 
-fn is_abbreviation(prefix: &str) -> bool {
+pub fn is_abbreviation(prefix: &str) -> bool {
     let last_word = prefix
-        .split_whitespace()
-        .last()
-        .unwrap_or("")
-        .trim_matches(|c: char| !c.is_alphabetic());
+        .unicode_words()
+        .next_back()
+        .map(|w| w.to_lowercase())
+        .unwrap_or_default();
 
     matches!(
-        last_word.to_ascii_lowercase().as_str(),
+        last_word.as_str(),
         "mr" | "mrs"
             | "ms"
             | "dr"
@@ -156,78 +153,28 @@ fn is_abbreviation(prefix: &str) -> bool {
             | "sr"
             | "jr"
             | "vs"
+            | "etc"
             | "eg"
             | "ie"
-            | "etc"
+            | "approx"
+            | "appt"
+            | "dept"
+            | "est"
+            | "min"
+            | "sec"
+            | "tel"
+            | "temp"
+            | "vet"
+            | "vol"
+            | "yd"
             | "st"
             | "ave"
+            | "rd"
+            | "blvd"
+            | "ln"
+            | "ct"
+            | "pl"
+            | "ste"
+            | "apt"
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn splits_complete_sentences() {
-        let mut chunker = SentenceChunker::new();
-        let sentences = chunker.push("Hello Rahul! How are you doing? I am good.");
-        assert_eq!(
-            sentences,
-            vec!["Hello Rahul!", "How are you doing?", "I am good."]
-        );
-        assert_eq!(chunker.flush(), None);
-    }
-
-    #[test]
-    fn streams_incremental_chunks() {
-        let mut chunker = SentenceChunker::new();
-        assert_eq!(chunker.push("Hello "), Vec::<String>::new());
-        assert_eq!(chunker.push("Rahul! How "), vec!["Hello Rahul!"]);
-        assert_eq!(chunker.push("are you?"), vec!["How are you?"]);
-        assert_eq!(chunker.flush(), None);
-    }
-
-    #[test]
-    fn ignores_abbreviations_and_decimals() {
-        let mut chunker = SentenceChunker::new();
-        let sentences = chunker.push("Dr. Smith bought 3.5 kg of apples. That was great!");
-        assert_eq!(
-            sentences,
-            vec!["Dr. Smith bought 3.5 kg of apples.", "That was great!"]
-        );
-    }
-
-    #[test]
-    fn flushes_unpunctuated_text() {
-        let mut chunker = SentenceChunker::new();
-        assert_eq!(chunker.push("Sure let me check"), Vec::<String>::new());
-        assert_eq!(chunker.flush(), Some("Sure let me check".to_string()));
-    }
-
-    #[test]
-    fn splits_long_clauses_for_low_latency() {
-        let mut chunker = SentenceChunker::new();
-        let sentences = chunker.push(
-            "I checked your schedule for tomorrow morning, and you have a doctor appointment at ten AM.",
-        );
-        assert_eq!(
-            sentences,
-            vec![
-                "I checked your schedule for tomorrow morning,",
-                "and you have a doctor appointment at ten AM."
-            ]
-        );
-    }
-
-    #[test]
-    fn does_not_emit_or_flush_non_alphabetic_fragments() {
-        let mut chunker = SentenceChunker::new();
-        assert_eq!(chunker.push("40. "), Vec::<String>::new());
-        assert_eq!(chunker.flush(), None);
-
-        let mut chunker2 = SentenceChunker::new();
-        assert_eq!(chunker2.push("--- "), Vec::<String>::new());
-        assert_eq!(chunker2.flush(), None);
-    }
 }

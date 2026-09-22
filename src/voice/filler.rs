@@ -1,8 +1,13 @@
-use crate::voice::provider::{TtsProvider, VoiceError};
+// this file code contains conversational filler generation and caching
+
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::StreamExt;
 use std::sync::{Arc, LazyLock};
+
+use crate::providers::tts::TtsProvider;
+use crate::voice::provider::VoiceError;
+use crate::voice::session::CallCommand;
 
 pub static FILLER_CACHE: LazyLock<DashMap<&'static str, Vec<Bytes>>> = LazyLock::new(DashMap::new);
 
@@ -34,7 +39,7 @@ pub fn prewarm_fillers(tts: Arc<dyn TtsProvider>) {
 pub async fn play_filler(
     phrase: &'static str,
     tts: &dyn TtsProvider,
-    output: &tokio::sync::mpsc::Sender<crate::voice::session::CallCommand>,
+    output: &tokio::sync::mpsc::Sender<CallCommand>,
     first_audio_tracker: &mut Option<std::time::Instant>,
     audio_playing: &std::sync::atomic::AtomicBool,
 ) -> Result<u128, VoiceError> {
@@ -46,7 +51,7 @@ pub async fn play_filler(
         let mut is_first = true;
         for chunk in cached_chunks.iter() {
             output
-                .send(crate::voice::session::CallCommand::Media(chunk.clone()))
+                .send(CallCommand::Media(chunk.clone()))
                 .await
                 .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
             audio_playing.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -82,9 +87,7 @@ pub async fn play_filler(
     {
         let chunk_bytes = chunk?;
         output
-            .send(crate::voice::session::CallCommand::Media(
-                chunk_bytes.clone(),
-            ))
+            .send(CallCommand::Media(chunk_bytes.clone()))
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
         audio_playing.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -123,166 +126,71 @@ pub fn strip_leading_ack(sentence: &str) -> &str {
     } else {
         trimmed
     };
-    let acks = [
-        "on it.",
-        "on it,",
-        "on it!",
-        "on it",
-        "done.",
-        "done,",
-        "done!",
-        "done",
-        "got it.",
-        "got it,",
-        "got it!",
-        "got it",
-        "sure thing.",
-        "sure thing,",
-        "sure thing!",
-        "sure thing",
-        "sure.",
+
+    let lower = effective.to_ascii_lowercase();
+    let ack_prefixes = [
         "sure,",
         "sure!",
-        "certainly.",
+        "sure.",
+        "sure ",
         "certainly,",
         "certainly!",
-        "certainly",
-        "right away.",
-        "right away,",
-        "one moment.",
-        "one moment,",
-        "no problem.",
+        "certainly.",
+        "certainly ",
+        "i'd be happy to help with that.",
+        "i'd be happy to help with that,",
+        "i'd be happy to help.",
+        "i'd be happy to help,",
+        "i can help with that.",
+        "i can help with that,",
+        "i can certainly help with that.",
+        "i can certainly help with that,",
+        "of course,",
+        "of course!",
+        "of course.",
+        "of course ",
         "no problem,",
-        "alright.",
-        "alright,",
-        "all right.",
-        "all right,",
-        "i'll note that down.",
-        "i've noted that down.",
-        "i have noted that down.",
-        "i'll add that to your tasks.",
-        "i've added that to your tasks.",
-        "i have added that to your tasks.",
-        "i'll set that reminder.",
-        "i've set that reminder.",
-        "i have set that reminder.",
-        "i'll put that on your calendar.",
-        "i've checked your calendar.",
-        "checking your calendar.",
-        "checking that for you.",
+        "no problem!",
+        "no problem.",
+        "no problem ",
+        "got it,",
+        "got it!",
+        "got it.",
+        "got it ",
+        "understands,",
+        "understood,",
+        "understood.",
+        "understood!",
+        "understood ",
+        "okay,",
+        "okay.",
+        "okay ",
+        "ok,",
+        "ok.",
+        "ok ",
+        "right,",
+        "right.",
+        "right ",
+        "great,",
+        "great!",
+        "great.",
+        "great ",
         "let me check that for you.",
-        "looking that up for you.",
-        "let me look that up.",
-        "looking that up now.",
-        "logging that for you.",
-        "i've logged that.",
-        "i have logged that.",
-        "i'll draft that message.",
-        "i've drafted that message.",
-        "noted.",
-        "noted,",
-        "logged.",
-        "logged,",
-        "added.",
-        "added,",
+        "let me look that up for you.",
+        "let me check that.",
+        "let me check,",
+        "let me see,",
+        "let me see.",
     ];
-    let lower = effective.to_ascii_lowercase();
-    for ack in acks {
-        if lower.starts_with(ack) {
-            let remainder = effective[ack.len()..].trim_start();
-            if remainder.chars().any(|c| c.is_alphabetic()) {
-                return remainder;
-            } else {
-                return "";
+
+    for prefix in &ack_prefixes {
+        if lower.starts_with(prefix) {
+            let stripped = effective[prefix.len()..].trim_start();
+            if !stripped.is_empty() && stripped.chars().any(|c| c.is_alphabetic()) {
+                return stripped;
             }
         }
     }
-    sentence
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_strip_leading_ack_extended() {
-        assert_eq!(
-            strip_leading_ack("On it. India's next match is a Test against the West Indies."),
-            "India's next match is a Test against the West Indies."
-        );
-        assert_eq!(
-            strip_leading_ack("Done. Apple is trading at $337."),
-            "Apple is trading at $337."
-        );
-        assert_eq!(
-            strip_leading_ack("Sure thing! I will set that reminder."),
-            "I will set that reminder."
-        );
-        assert_eq!(
-            strip_leading_ack("I've noted that down. Your reminder to call mom is set for 5 PM."),
-            "Your reminder to call mom is set for 5 PM."
-        );
-        assert_eq!(
-            strip_leading_ack("Logging that for you. 450 rupees logged under lunch."),
-            "450 rupees logged under lunch."
-        );
-        assert_eq!(
-            strip_leading_ack("I've checked your calendar. You are free after 3 PM."),
-            "You are free after 3 PM."
-        );
-        assert_eq!(
-            strip_leading_ack("[thoughtful] Got it. Apple is trading at ."),
-            "Apple is trading at ."
-        );
-        assert_eq!(
-            strip_leading_ack("[thoughtful] Apple is trading at ."),
-            "[thoughtful] Apple is trading at ."
-        );
-        assert_eq!(strip_leading_ack("[thoughtful] Got it."), "");
-    }
-
-    #[tokio::test]
-    async fn test_filler_cache_instant_playback() {
-        use crate::voice::provider::AudioStream;
-        use async_trait::async_trait;
-        use std::sync::atomic::AtomicBool;
-        use tokio::sync::mpsc;
-
-        struct MockTts;
-        #[async_trait]
-        impl TtsProvider for MockTts {
-            async fn synthesize(&self, _text: &str) -> Result<AudioStream, VoiceError> {
-                let chunks = vec![Ok(Bytes::from_static(&[0xaa, 0xbb]))];
-                Ok(Box::pin(futures_util::stream::iter(chunks)))
-            }
-        }
-
-        let phrase = "I'll note that down.";
-        let tts = MockTts;
-        let (output_tx, mut output_rx) = mpsc::channel(8);
-        let mut first_audio = None;
-        let playing = AtomicBool::new(false);
-
-        let ttfb1 = play_filler(phrase, &tts, &output_tx, &mut first_audio, &playing)
-            .await
-            .unwrap();
-        assert!(first_audio.is_some());
-        let cmd1 = output_rx.recv().await.unwrap();
-        assert_eq!(
-            cmd1,
-            crate::voice::session::CallCommand::Media(Bytes::from_static(&[0xaa, 0xbb]))
-        );
-
-        let mut first_audio2 = None;
-        let ttfb2 = play_filler(phrase, &tts, &output_tx, &mut first_audio2, &playing)
-            .await
-            .unwrap();
-        assert!(first_audio2.is_some());
-        assert!(ttfb2 <= ttfb1 + 5);
-        let cmd2 = output_rx.recv().await.unwrap();
-        assert_eq!(
-            cmd2,
-            crate::voice::session::CallCommand::Media(Bytes::from_static(&[0xaa, 0xbb]))
-        );
-    }
+    effective
 }

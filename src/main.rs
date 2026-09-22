@@ -1,32 +1,16 @@
-mod agents;
-mod routes;
-mod telephony;
-mod voice;
+// this file code contains bridge application entry point
 
-use axum::{
-    Router,
-    extract::{
-        State, WebSocketUpgrade,
-        ws::{Message, WebSocket},
-    },
-    response::{Html, IntoResponse},
-    routing::{get, post},
-};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-pub struct AppState {
-    pub tx: broadcast::Sender<String>,
-    pub twilio: Arc<DashMap<String, crate::routes::twilio::twilio_post::TwilioState>>,
-    pub twilio_account_sid: Arc<String>,
-    pub twilio_auth_token: Arc<String>,
-    pub twilio_from_number: Arc<String>,
-    pub service_token: Arc<String>,
-    pub core_url: Arc<String>,
-    pub telephony: Option<Arc<dyn crate::telephony::TelephonyClient>>,
-    pub voice: Arc<crate::voice::registry::VoiceRuntime>,
-}
+use vox_bridge::channels::twilio::{TwilioApiClient, VOICE_STATUS_URL, VOICE_STREAM_URL};
+use vox_bridge::core::client::CoreClient;
+use vox_bridge::providers::telephony::TelephonyClient;
+use vox_bridge::voice::config::VoiceConfig;
+use vox_bridge::voice::filler::prewarm_fillers;
+use vox_bridge::voice::registry::VoiceRuntime;
+use vox_bridge::{AppState, app};
 
 #[tokio::main]
 async fn main() {
@@ -35,19 +19,32 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let (tx, _rx) = broadcast::channel(100);
-    let twilio_state: Arc<DashMap<String, crate::routes::twilio::twilio_post::TwilioState>> =
-        Arc::new(DashMap::new());
-    let voice_config = crate::voice::config::VoiceConfig::from_env()
-        .expect("voice provider configuration is invalid");
+    let twilio_state = Arc::new(DashMap::new());
+    let voice_config =
+        VoiceConfig::from_env().expect("voice provider configuration is invalid");
     let core_url = voice_config.secrets.core_url.clone();
+    let host_credential_id = voice_config.secrets.core_host_credential_id.clone();
+    let host_audience = voice_config.secrets.core_host_audience.clone();
+    let host_secret = voice_config.secrets.core_host_secret.clone();
+
+    let core_client = Arc::new(
+        CoreClient::new(
+            core_url.clone(),
+            host_credential_id,
+            host_audience,
+            host_secret,
+        )
+        .expect("core client initialization failed"),
+    );
+
     let voice = Arc::new(
-        crate::voice::registry::VoiceRuntime::from_config(voice_config)
+        VoiceRuntime::from_config(voice_config)
             .expect("voice provider runtime initialization failed"),
     );
 
     let profile = voice.resolver.resolve();
     if let Ok(providers) = voice.providers.providers_for(&profile) {
-        crate::voice::filler::prewarm_fillers(providers.tts.clone());
+        prewarm_fillers(providers.tts.clone());
     }
 
     let twilio_account_sid = std::env::var("TWILIO_ACCOUNT_SID").unwrap_or_default();
@@ -55,20 +52,26 @@ async fn main() {
         std::env::var("TWILIO_AUTH_TOKEN").expect("TWILIO_AUTH_TOKEN is missing");
     let twilio_from_number = std::env::var("TWILIO_FROM_NUMBER").unwrap_or_default();
 
-    let telephony: Option<Arc<dyn crate::telephony::TelephonyClient>> =
+    let telephony: Option<Arc<dyn TelephonyClient>> =
         if !twilio_account_sid.is_empty() && !twilio_from_number.is_empty() {
-            crate::telephony::twilio_client::TwilioApiClient::new(
+            TwilioApiClient::new(
                 twilio_account_sid.clone(),
                 twilio_auth_token.clone(),
                 twilio_from_number.clone(),
-                crate::routes::twilio::twilio_post::VOICE_STREAM_URL.to_string(),
-                crate::routes::twilio::twilio_status::VOICE_STATUS_URL.to_string(),
+                VOICE_STREAM_URL.to_string(),
+                VOICE_STATUS_URL.to_string(),
             )
             .ok()
-            .map(|client| Arc::new(client) as Arc<dyn crate::telephony::TelephonyClient>)
+            .map(|client| Arc::new(client) as Arc<dyn TelephonyClient>)
         } else {
             None
         };
+
+    let service_token = std::env::var("VOX_BRIDGE_SERVICE_TOKEN").unwrap_or_default();
+    let whatsapp_verify_token = std::env::var("WA_VERIFY_KEY").ok();
+    let whatsapp_app_secret = std::env::var("META_APP_SECRET").ok();
+    let whatsapp_access_token = std::env::var("WHATSAPP_ACCESS_KEY").ok();
+    let whatsapp_phone_id = std::env::var("WHATSAPP_PHONE_ID").ok();
 
     let app_state = Arc::new(AppState {
         tx,
@@ -76,41 +79,21 @@ async fn main() {
         twilio_account_sid: Arc::new(twilio_account_sid),
         twilio_auth_token: Arc::new(twilio_auth_token),
         twilio_from_number: Arc::new(twilio_from_number),
-        service_token: Arc::new(String::new()),
+        service_token: Arc::new(service_token),
         core_url: Arc::new(core_url.clone()),
         telephony,
         voice,
+        core_client,
+        whatsapp_verify_token,
+        whatsapp_app_secret,
+        whatsapp_access_token,
+        whatsapp_phone_id,
     });
 
-    let app = Router::new()
-        .route("/", get(index_handler))
-        .route("/health", get(health_handler))
-        .route("/ws", get(ws_socket_upgrade))
-        .route(
-            "/bridge/wa",
-            get(routes::whatsapp::wa_verify).post(routes::whatsapp::wa_receive),
-        )
-        .route(
-            "/bridge/twilio/voice",
-            post(routes::twilio::twilio_post::initialize_voice_socket),
-        )
-        .route(
-            "/bridge/twilio/voice/stream",
-            get(routes::twilio::twilio_socket::voice_stream_handler),
-        )
-        .route(
-            "/bridge/twilio/voice/status",
-            post(routes::twilio::twilio_status::handle_voice_status),
-        )
-        .route(
-            "/internal/v1/actions/outbound-call",
-            post(routes::internal::outbound_call::handle_outbound_call),
-        )
-        .with_state(app_state);
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-
-    println!("Server running on http://0.0.0.0:3000");
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
 
     let prewarm_url = core_url.clone();
     tokio::spawn(async move {
@@ -126,7 +109,9 @@ async fn main() {
         }
     });
 
-    axum::serve(listener, app).await.unwrap();
+    if let Err(e) = app::run_server(app_state, port).await {
+        eprintln!("server error: {e}");
+    }
 }
 
 fn install_crypto_provider() {
@@ -134,29 +119,5 @@ fn install_crypto_provider() {
         rustls::crypto::ring::default_provider()
             .install_default()
             .expect("failed to install the Rustls crypto provider");
-    }
-}
-
-async fn index_handler() -> impl IntoResponse {
-    Html("<h1>Hello</h1>")
-}
-
-async fn health_handler() -> &'static str {
-    "ok"
-}
-
-async fn ws_socket_upgrade(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_wa_socket(socket, state))
-}
-
-async fn handle_wa_socket(mut socket: WebSocket, state: Arc<AppState>) {
-    let mut rx = state.tx.subscribe();
-    while let Ok(msg) = rx.recv().await {
-        if socket.send(Message::Text(msg.into())).await.is_err() {
-            break;
-        }
     }
 }

@@ -1,27 +1,17 @@
-use super::context::CallContext;
-use async_trait::async_trait;
-use bytes::Bytes;
-use futures_util::Stream;
-use std::{pin::Pin, sync::Arc};
+// this file code contains voice provider types and traits
+
+pub use crate::channels::context::CallContext;
+pub use crate::core::{
+    ConversationClient as AgentProvider, ConversationClient,
+    ConversationEvent as AgentEvent, ConversationEvent, ConversationEventStream as AgentEventStream,
+    TextStream,
+};
+pub use crate::providers::stt::{SttEvent, SttProvider, SttSession};
+pub use crate::providers::tts::{AudioStream, TtsProvider};
+pub use crate::voice::registry::ProviderSet as VoiceProviders;
+pub use crate::voice::registry::ProviderSet;
+
 use thiserror::Error;
-
-pub type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, VoiceError>> + Send>>;
-pub type TextStream = Pin<Box<dyn Stream<Item = Result<String, VoiceError>> + Send>>;
-
-pub type AgentEventStream = Pin<Box<dyn Stream<Item = Result<AgentEvent, VoiceError>> + Send>>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentEvent {
-    Text(String),
-    LookupPending,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SttEvent {
-    SpeechStarted,
-    PartialTranscript(String),
-    FinalTranscript(String),
-}
 
 #[derive(Debug, Error)]
 pub enum VoiceError {
@@ -36,57 +26,4 @@ pub enum VoiceError {
     Protocol(String),
     #[error("{0} timed out")]
     Timeout(&'static str),
-}
-
-#[async_trait]
-pub trait SttSession: Send + Sync {
-    async fn send_audio(&self, audio: Bytes) -> Result<(), VoiceError>;
-    async fn next_event(&self) -> Result<Option<SttEvent>, VoiceError>;
-    async fn finish(&self) -> Result<(), VoiceError>;
-}
-
-#[async_trait]
-pub trait SttProvider: Send + Sync {
-    async fn connect(&self) -> Result<Arc<dyn SttSession>, VoiceError>;
-}
-
-#[async_trait]
-pub trait AgentProvider: Send + Sync {
-    async fn respond(&self, context: &CallContext, transcript: &str) -> Result<String, VoiceError>;
-    async fn respond_stream(
-        &self,
-        context: &CallContext,
-        transcript: &str,
-    ) -> Result<TextStream, VoiceError> {
-        let text = self.respond(context, transcript).await?;
-        Ok(Box::pin(futures_util::stream::once(
-            async move { Ok(text) },
-        )))
-    }
-
-    async fn respond_events(
-        &self,
-        context: &CallContext,
-        transcript: &str,
-    ) -> Result<AgentEventStream, VoiceError> {
-        use futures_util::StreamExt;
-        Ok(Box::pin(
-            self.respond_stream(context, transcript)
-                .await?
-                .map(|result| result.map(AgentEvent::Text)),
-        ))
-    }
-
-    async fn speculate(&self, _context: &CallContext, _transcript: &str) -> Result<(), VoiceError> {
-        Ok(())
-    }
-
-    async fn complete(&self, _context: &CallContext) -> Result<(), VoiceError> {
-        Ok(())
-    }
-}
-
-#[async_trait]
-pub trait TtsProvider: Send + Sync {
-    async fn synthesize(&self, text: &str) -> Result<AudioStream, VoiceError>;
 }

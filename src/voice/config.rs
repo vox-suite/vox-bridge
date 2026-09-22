@@ -1,15 +1,7 @@
+// this file code contains voice configuration and profile definitions
+
 use crate::voice::provider::VoiceError;
 use std::collections::HashMap;
-
-const V3_SPEAKERS: &[&str] = &[
-    "shubh", "aditya", "ritu", "priya", "neha", "rahul", "pooja", "rohan", "simran", "kavya",
-    "amit", "dev", "ishita", "shreya", "ratan", "varun", "manan", "sumit", "roopa", "kabir",
-    "aayan", "ashutosh", "advait", "anand", "tarun", "sunny", "mani", "gokul", "vijay", "shruti",
-    "suhani", "mohit", "kavitha", "rehan", "soham", "rupali",
-];
-const V2_SPEAKERS: &[&str] = &[
-    "anushka", "manisha", "vidya", "arya", "abhilash", "karun", "hitesh",
-];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderSelection {
@@ -33,8 +25,8 @@ pub struct VoiceProfile {
     pub tts: TtsSelection,
 }
 
-#[derive(Clone)]
-pub(crate) struct VoiceSecrets {
+#[derive(Clone, Debug)]
+pub struct VoiceSecrets {
     pub assemblyai_api_key: String,
     pub core_url: String,
     pub core_host_credential_id: String,
@@ -44,10 +36,10 @@ pub(crate) struct VoiceSecrets {
     pub elevenlabs_api_key: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct VoiceConfig {
     pub profile: VoiceProfile,
-    pub(crate) secrets: VoiceSecrets,
+    pub secrets: VoiceSecrets,
 }
 
 impl VoiceConfig {
@@ -215,190 +207,18 @@ fn require_provider(kind: &str, actual: &str, supported: &[&str]) -> Result<(), 
 }
 
 fn validate_sarvam(model: &str, speaker: &str, pace: f64) -> Result<(), VoiceError> {
-    let (speakers, range) = match model {
-        "bulbul:v3" => (V3_SPEAKERS, 0.5..=2.0),
-        "bulbul:v2" => (V2_SPEAKERS, 0.3..=3.0),
+    if speaker.trim().is_empty() {
+        return Err(VoiceError::Configuration("speaker cannot be empty".into()));
+    }
+    let range = match model {
+        "bulbul:v3" => 0.5..=2.0,
+        "bulbul:v2" => 0.3..=3.0,
         _ => unreachable!(),
     };
-    if !speakers.contains(&speaker) {
-        return Err(VoiceError::Configuration(format!(
-            "speaker {speaker} is incompatible with {model}"
-        )));
-    }
     if !range.contains(&pace) {
         return Err(VoiceError::Configuration(format!(
             "pace {pace} is incompatible with {model}"
         )));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    fn valid_values() -> HashMap<String, String> {
-        HashMap::from([
-            ("ASSEMBLYAI_API_KEY".into(), "assembly-key".into()),
-            ("VOX_CORE_URL".into(), "http://core-api:3001".into()),
-            (
-                "VOX_CORE_HOST_CREDENTIAL_ID".into(),
-                "f7f90d3d-5ded-4acf-850f-650bcb965fd1".into(),
-            ),
-            (
-                "VOX_CORE_HOST_AUDIENCE".into(),
-                "vox-host:development:bridge".into(),
-            ),
-            ("VOX_CORE_HOST_SECRET".into(), "host-secret".into()),
-            ("ELEVENLABS_API_KEY".into(), "eleven-key".into()),
-        ])
-    }
-
-    #[test]
-    fn applies_the_default_voice_profile() {
-        let values = valid_values();
-        let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
-
-        assert_eq!(config.profile.stt.provider, "assemblyai");
-        assert_eq!(config.profile.stt.model, "universal-3-5-pro");
-        assert_eq!(config.profile.agent.provider, "vox-core");
-        assert_eq!(config.profile.agent.model, "default");
-        assert_eq!(config.profile.tts.provider, "elevenlabs");
-        assert_eq!(config.profile.tts.model, "eleven_flash_v2_5");
-        assert_eq!(config.profile.tts.speaker, "21m00Tcm4TlvDq8ikWAM");
-        assert_eq!(config.profile.tts.pace, 1.0);
-    }
-
-    #[test]
-    fn configures_sarvam_voice_profile() {
-        let mut values = valid_values();
-        values.remove("ELEVENLABS_API_KEY");
-        values.insert("VOX_TTS_PROVIDER".into(), "sarvam".into());
-        values.insert("SARVAM_API_KEY".into(), "sarvam-key".into());
-
-        let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
-
-        assert_eq!(config.profile.tts.provider, "sarvam");
-        assert_eq!(config.profile.tts.model, "bulbul:v3");
-        assert_eq!(config.profile.tts.language_code, "en-IN");
-        assert_eq!(config.profile.tts.speaker, "shubh");
-        assert_eq!(config.profile.tts.pace, 1.0);
-    }
-
-    #[test]
-    fn defaults_core_url_for_native_deployment() {
-        let mut values = valid_values();
-        values.remove("VOX_CORE_URL");
-
-        let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
-
-        assert_eq!(config.secrets.core_url, "http://127.0.0.1:3001");
-    }
-
-    #[test]
-    fn rejects_unsupported_providers() {
-        for (key, value) in [
-            ("VOX_STT_PROVIDER", "deepgram"),
-            ("VOX_TTS_PROVIDER", "unsupported_tts"),
-        ] {
-            let mut values = valid_values();
-            values.insert(key.into(), value.into());
-
-            let error = VoiceConfig::from_values(|name| values.get(name).cloned())
-                .err()
-                .unwrap();
-
-            assert!(error.to_string().contains(value));
-        }
-    }
-
-    #[test]
-    fn configures_elevenlabs_voice_profile() {
-        let mut values = valid_values();
-        values.insert("VOX_TTS_PROVIDER".into(), "elevenlabs".into());
-        values.insert("ELEVENLABS_API_KEY".into(), "eleven-key".into());
-
-        let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
-
-        assert_eq!(config.profile.tts.provider, "elevenlabs");
-        assert_eq!(config.profile.tts.model, "eleven_flash_v2_5");
-        assert_eq!(config.profile.tts.speaker, "21m00Tcm4TlvDq8ikWAM");
-        assert_eq!(
-            config.secrets.elevenlabs_api_key.as_deref(),
-            Some("eleven-key")
-        );
-    }
-
-    #[test]
-    fn configures_custom_elevenlabs_settings() {
-        let mut values = valid_values();
-        values.insert("VOX_TTS_PROVIDER".into(), "elevenlabs".into());
-        values.insert("ELEVENLABS_API_KEY".into(), "custom-xi-key".into());
-        values.insert(
-            "ELEVENLABS_MODEL_ID".into(),
-            "eleven_multilingual_v2".into(),
-        );
-        values.insert("ELEVENLABS_VOICE_ID".into(), "custom-voice-id".into());
-
-        let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
-
-        assert_eq!(config.profile.tts.provider, "elevenlabs");
-        assert_eq!(config.profile.tts.model, "eleven_multilingual_v2");
-        assert_eq!(config.profile.tts.speaker, "custom-voice-id");
-        assert_eq!(
-            config.secrets.elevenlabs_api_key.as_deref(),
-            Some("custom-xi-key")
-        );
-    }
-
-    #[test]
-    fn rejects_missing_provider_credentials() {
-        for key in [
-            "ASSEMBLYAI_API_KEY",
-            "VOX_CORE_HOST_CREDENTIAL_ID",
-            "VOX_CORE_HOST_AUDIENCE",
-            "VOX_CORE_HOST_SECRET",
-            "ELEVENLABS_API_KEY",
-        ] {
-            let mut values = valid_values();
-            values.remove(key);
-
-            let error = VoiceConfig::from_values(|name| values.get(name).cloned())
-                .err()
-                .unwrap();
-
-            assert!(error.to_string().contains(key));
-        }
-    }
-
-    #[test]
-    fn rejects_missing_sarvam_credentials() {
-        let mut values = valid_values();
-        values.remove("ELEVENLABS_API_KEY");
-        values.insert("VOX_TTS_PROVIDER".into(), "sarvam".into());
-
-        let error = VoiceConfig::from_values(|name| values.get(name).cloned())
-            .err()
-            .unwrap();
-
-        assert!(error.to_string().contains("SARVAM_API_KEY"));
-    }
-
-    #[test]
-    fn rejects_invalid_sarvam_settings() {
-        let mut values = valid_values();
-        values.remove("ELEVENLABS_API_KEY");
-        values.insert("VOX_TTS_PROVIDER".into(), "sarvam".into());
-        values.insert("SARVAM_API_KEY".into(), "sarvam-key".into());
-        values.insert("SARVAM_TTS_PACE".into(), "2.1".into());
-        assert!(VoiceConfig::from_values(|name| values.get(name).cloned()).is_err());
-
-        let mut values = valid_values();
-        values.remove("ELEVENLABS_API_KEY");
-        values.insert("VOX_TTS_PROVIDER".into(), "sarvam".into());
-        values.insert("SARVAM_API_KEY".into(), "sarvam-key".into());
-        values.insert("SARVAM_SPEAKER".into(), "anushka".into());
-        assert!(VoiceConfig::from_values(|name| values.get(name).cloned()).is_err());
-    }
 }

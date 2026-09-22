@@ -1,3 +1,5 @@
+// this file code contains conversational turn assembly and settling
+
 use std::time::Duration;
 
 #[derive(Clone, Debug)]
@@ -100,42 +102,5 @@ impl DraftTurn {
                 )
         });
         Duration::from_millis(if numeric { 1200 } else { 350 })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn partial_revisions_replace_and_final_does_not_duplicate() {
-        let mut turn = DraftTurn::default();
-        assert!(turn.partial("list my"));
-        assert!(!turn.partial("list my"));
-        assert!(turn.partial("list my tasks"));
-        assert_eq!(turn.snapshot(), "list my tasks");
-        turn.finish("list my tasks.");
-        assert_eq!(turn.snapshot(), "list my tasks.");
-    }
-
-    #[test]
-    fn phone_fragments_wait_longer_and_accumulate() {
-        let mut turn = DraftTurn::default();
-        turn.finish("933.");
-        assert_eq!(turn.settle_delay(), Duration::from_millis(1200));
-        turn.finish("780.");
-        assert_eq!(turn.snapshot(), "933. 780.");
-        turn.finish("double eight twelve.");
-        assert_eq!(turn.settle_delay(), Duration::from_millis(1200));
-    }
-
-    #[test]
-    fn correction_replaces_obsolete_text_but_additional_requests_survive() {
-        let mut turn = DraftTurn::default();
-        turn.finish("list my tasks");
-        turn.finish("and check my calendar");
-        assert_eq!(turn.snapshot(), "list my tasks and check my calendar");
-        turn.finish("Actually, just tomorrow's tasks.");
-        assert_eq!(turn.snapshot(), "Actually, just tomorrow's tasks.");
     }
 }

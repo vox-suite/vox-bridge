@@ -1,25 +1,20 @@
-use crate::{
-    agents::{
-        core_client::CoreAgentClient,
-        stt::assembly_stt::AssemblyAiStt,
-        tts::{
-            elevenlabs_tts::{ElevenLabsSettings, ElevenLabsTts},
-            sarvam_tts::{SarvamSettings, SarvamTts},
-        },
-    },
-    voice::{
-        config::{VoiceConfig, VoiceProfile},
-        provider::{AgentProvider, SttProvider, TtsProvider, VoiceError},
-    },
-};
+// this file code contains voice runtime and provider registry initialization
+
 use std::{collections::HashMap, sync::Arc};
+
+use crate::core::client::CoreClient;
+use crate::providers::stt::assemblyai::AssemblyAiStt;
+use crate::providers::tts::elevenlabs::{ElevenLabsSettings, ElevenLabsTts};
+use crate::providers::tts::sarvam::{SarvamSettings, SarvamTts};
+use crate::voice::config::{VoiceConfig, VoiceProfile};
+use crate::voice::provider::{AgentProvider, SttProvider, TtsProvider, VoiceError};
 
 pub trait VoiceProfileResolver: Send + Sync {
     fn resolve(&self) -> VoiceProfile;
 }
 
 pub struct StaticVoiceProfileResolver {
-    profile: VoiceProfile,
+    pub profile: VoiceProfile,
 }
 
 impl VoiceProfileResolver for StaticVoiceProfileResolver {
@@ -29,9 +24,9 @@ impl VoiceProfileResolver for StaticVoiceProfileResolver {
 }
 
 pub struct ProviderRegistry {
-    stt: HashMap<String, Arc<dyn SttProvider>>,
-    agents: HashMap<String, Arc<dyn AgentProvider>>,
-    tts: HashMap<String, Arc<dyn TtsProvider>>,
+    pub stt: HashMap<String, Arc<dyn SttProvider>>,
+    pub agents: HashMap<String, Arc<dyn AgentProvider>>,
+    pub tts: HashMap<String, Arc<dyn TtsProvider>>,
 }
 
 #[derive(Clone)]
@@ -69,7 +64,6 @@ pub struct VoiceRuntime {
 
 impl VoiceRuntime {
     pub fn from_config(config: VoiceConfig) -> Result<Self, VoiceError> {
-        crate::voice::embedding::initialize_speaker_model().map_err(VoiceError::Configuration)?;
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .tcp_nodelay(true)
@@ -84,7 +78,7 @@ impl VoiceRuntime {
             profile.stt.model.clone(),
         ));
         let agent: Arc<dyn AgentProvider> = Arc::new(
-            CoreAgentClient::new(
+            CoreClient::new(
                 config.secrets.core_url,
                 config.secrets.core_host_credential_id,
                 config.secrets.core_host_audience,
@@ -148,81 +142,4 @@ impl VoiceRuntime {
 
 fn unregistered(kind: &str, provider: &str) -> VoiceError {
     VoiceError::Configuration(format!("unregistered {kind} provider {provider}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::voice::config::VoiceConfig;
-    use std::collections::HashMap;
-
-    fn config() -> VoiceConfig {
-        let values = HashMap::from([
-            ("ASSEMBLYAI_API_KEY".to_owned(), "assembly-key".to_owned()),
-            ("VOX_CORE_URL".to_owned(), "http://core-api:3001".to_owned()),
-            (
-                "VOX_CORE_HOST_CREDENTIAL_ID".to_owned(),
-                "f7f90d3d-5ded-4acf-850f-650bcb965fd1".to_owned(),
-            ),
-            (
-                "VOX_CORE_HOST_AUDIENCE".to_owned(),
-                "vox-host:development:bridge".to_owned(),
-            ),
-            ("VOX_CORE_HOST_SECRET".to_owned(), "host-secret".to_owned()),
-            ("ELEVENLABS_API_KEY".to_owned(), "eleven-key".to_owned()),
-        ]);
-        VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap()
-    }
-
-    #[test]
-    fn resolves_the_configured_provider_set() {
-        let runtime = VoiceRuntime::from_config(config()).unwrap();
-        let profile = runtime.resolver.resolve();
-
-        assert_eq!(profile.stt.provider, "assemblyai");
-        assert_eq!(profile.agent.provider, "vox-core");
-        assert_eq!(profile.tts.provider, "elevenlabs");
-        assert_eq!(profile.tts.model, "eleven_flash_v2_5");
-        assert_eq!(profile.tts.speaker, "21m00Tcm4TlvDq8ikWAM");
-        assert!(runtime.providers.providers_for(&profile).is_ok());
-    }
-
-    #[test]
-    fn resolves_sarvam_provider_set() {
-        let values = HashMap::from([
-            ("ASSEMBLYAI_API_KEY".to_owned(), "assembly-key".to_owned()),
-            (
-                "VOX_CORE_HOST_CREDENTIAL_ID".to_owned(),
-                "f7f90d3d-5ded-4acf-850f-650bcb965fd1".to_owned(),
-            ),
-            (
-                "VOX_CORE_HOST_AUDIENCE".to_owned(),
-                "vox-host:development:bridge".to_owned(),
-            ),
-            ("VOX_CORE_HOST_SECRET".to_owned(), "host-secret".to_owned()),
-            ("VOX_TTS_PROVIDER".to_owned(), "sarvam".to_owned()),
-            ("SARVAM_API_KEY".to_owned(), "sarvam-key".to_owned()),
-        ]);
-        let config = VoiceConfig::from_values(|key| values.get(key).cloned()).unwrap();
-        let runtime = VoiceRuntime::from_config(config).unwrap();
-        let profile = runtime.resolver.resolve();
-
-        assert_eq!(profile.stt.provider, "assemblyai");
-        assert_eq!(profile.agent.provider, "vox-core");
-        assert_eq!(profile.tts.provider, "sarvam");
-        assert_eq!(profile.tts.model, "bulbul:v3");
-        assert_eq!(profile.tts.speaker, "shubh");
-        assert!(runtime.providers.providers_for(&profile).is_ok());
-    }
-
-    #[test]
-    fn rejects_a_profile_for_an_unregistered_provider() {
-        let runtime = VoiceRuntime::from_config(config()).unwrap();
-        let mut profile = runtime.resolver.resolve();
-        profile.tts.provider = "sarvam".into();
-
-        let error = runtime.providers.providers_for(&profile).err().unwrap();
-
-        assert!(error.to_string().contains("sarvam"));
-    }
 }
