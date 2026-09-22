@@ -17,10 +17,16 @@
 - Keep STT, TTS, and telephony independently replaceable. Preserve the current provider default during structural changes; current source defaults to ElevenLabs and supports Sarvam.
 - No direct database/Redis access, prompts, business tools, shopping connectors, or desktop job scheduling in Bridge.
 - Speculative partial turns initiate read-only work in Core. Finalized complete turns trigger the main agent in Core.
-- Greeting cache lookup, user creation, name resolution, and speaker identity decisions stay in Core. Bridge extracts acoustic evidence, never assigns the active user.
+- Greeting cache lookup, user creation, name resolution, and speaker identity decisions stay in Core. Bridge does not extract biometric evidence or assign an active speaker.
 - Preserve channel-prefixed identities, signed host assertions, and existing HTTP paths while moving code.
 - Preserve current voice behavior first. Put deliberate behavior changes in separate reviewable changes with regression tests.
 - No paid provider calls, production mutations, model downloads, source pushes, or releases as part of preparing this plan.
+
+## Updated voice scope from user clarification
+
+The user states local VAD and speaker verification have been removed for now. This supersedes earlier inspection-derived biometric/VAD work below. Do not restore them: remove residual acoustic-signature generation, model startup/downloads, voiceprint payloads, speaker switching, and unused ONNX/FFT dependencies after checking remaining consumers. Keep STT/provider speech/turn signals and test interruption/turn settling through the selected supported signals; provider-internal endpointing is distinct from a local VAD module. Generic greetings must not depend on biometric identity.
+
+Retain provider signature verification, channel identity, Core request authentication, and bounded media/MP3 conversion. Update Tasks 5, 7, 8, and 10 accordingly; no embedding benchmark or model-backed packaging smoke test is required. If an old Core payload temporarily accepts a nullable voice_signature, omit it or send null until both sides retire the field. The previous baseline is historical; this planning update does not verify or modify current runtime code.
 
 ## Current evidence, inspected 2026-09-22
 
@@ -116,7 +122,7 @@ src/
     chunker.rs                    linguistic text boundaries
     filler.rs                     cached filler synthesis/playback
     metrics.rs                    timing records and trace emission
-    audio/{mod.rs,vad.rs,embedding.rs,mp3.rs}
+    audio/{mod.rs,mp3.rs}
 tests/
   fixtures/                       existing fixture plus synthetic protocol cases
   core_contract.rs
@@ -207,7 +213,7 @@ cargo test --locked --test channel_routes
 
 ### Task 5: Decompose voice orchestration without behavior changes
 
-**Files:** split `src/voice/session.rs` into `session/{mod.rs,response.rs,speculation.rs,playback.rs,tests.rs}`; create `voice/metrics.rs`; move `vad.rs`, `embedding.rs`, `mp3.rs` under `voice/audio/`; update imports.
+**Files:** split `src/voice/session.rs` into `session/{mod.rs,response.rs,speculation.rs,playback.rs,tests.rs}`; create `voice/metrics.rs`; move `mp3.rs` under `voice/audio/`; retire unused local VAD/embedding modules; update imports.
 
 **Interfaces:** preserve `run_voice_session(ProviderSet, CallContext, mpsc::Receiver<CallEvent>, mpsc::Sender<CallCommand>) -> Result<(), VoiceError>` and existing `CallEvent`/`CallCommand` variants in this task. `session/mod.rs` re-exports them. Internal helpers use `pub(super)` as needed.
 
@@ -216,7 +222,7 @@ cargo test --locked --test channel_routes
 - [ ] Move the debounced watch-channel speculation task to speculation; keep 250 ms debounce and latest-snapshot replacement.
 - [ ] Encapsulate existing response/playback state in playback without changing decisions; keep the session loop responsible for transitions.
 - [ ] Move all existing session tests intact to `session/tests.rs`; retain the current user's session edits as the input to extraction.
-- [ ] Move audio modules without changing model initialization, embedding format, sampling, or fallback behavior. Preserve MP3 fixture coverage.
+- [ ] Retire unused local VAD/embedding paths under the updated scope. Preserve MP3 conversion fixture coverage and STT-event turn/interrupt regression tests.
 
 ```sh
 cargo check --locked
