@@ -13,6 +13,9 @@ api.voxagent.in {
 	handle /bridge/* {
 		reverse_proxy 127.0.0.1:3000
 	}
+	handle /auth/* {
+		reverse_proxy 127.0.0.1:3000
+	}
 	handle /twilio/* {
 		reverse_proxy 127.0.0.1:3000
 	}
