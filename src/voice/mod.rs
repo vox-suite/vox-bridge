@@ -23,5 +23,7 @@ pub use provider::{
 pub use registry::{
     ProviderRegistry, ProviderSet, StaticVoiceProfileResolver, VoiceProfileResolver, VoiceRuntime,
 };
-pub use session::{CallCommand, CallEvent, PlaybackState, run_voice_session, run_voice_session_with_playback};
+pub use session::{
+    CallCommand, CallEvent, PlaybackState, run_voice_session, run_voice_session_with_playback,
+};
 pub use turn::DraftTurn;

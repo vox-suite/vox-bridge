@@ -170,13 +170,18 @@ async fn test_desktop_session_creation_success_with_bearer_token() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 16).await.unwrap();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 16)
+        .await
+        .unwrap();
     let session_resp: CreateDesktopSessionResponse = serde_json::from_slice(&body_bytes).unwrap();
 
     assert!(!session_resp.ticket.is_empty());
     assert_eq!(
         session_resp.stream_url,
-        format!("/bridge/desktop/voice/stream?ticket={}", session_resp.ticket)
+        format!(
+            "/bridge/desktop/voice/stream?ticket={}",
+            session_resp.ticket
+        )
     );
     assert_eq!(session_resp.expires_in_seconds, 60);
 
@@ -212,7 +217,9 @@ async fn test_desktop_stream_ticket_anti_replay_and_expiry() {
     );
 
     let app = build_router(state.clone());
-    let req = ws_request(&format!("/bridge/desktop/voice/stream?ticket={expired_ticket}"));
+    let req = ws_request(&format!(
+        "/bridge/desktop/voice/stream?ticket={expired_ticket}"
+    ));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
@@ -234,7 +241,9 @@ async fn test_desktop_stream_ticket_anti_replay_and_expiry() {
 
     // Consume once (in oneshot mode without live TCP socket, the ticket is validated & popped, returning upgrade rejection 426)
     let app = build_router(state.clone());
-    let req = ws_request(&format!("/bridge/desktop/voice/stream?ticket={valid_ticket}"));
+    let req = ws_request(&format!(
+        "/bridge/desktop/voice/stream?ticket={valid_ticket}"
+    ));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
 
@@ -243,7 +252,9 @@ async fn test_desktop_stream_ticket_anti_replay_and_expiry() {
 
     // Replay attempt must fail with 401 Unauthorized because ticket was already consumed
     let app2 = build_router(state.clone());
-    let replay_req = ws_request(&format!("/bridge/desktop/voice/stream?ticket={valid_ticket}"));
+    let replay_req = ws_request(&format!(
+        "/bridge/desktop/voice/stream?ticket={valid_ticket}"
+    ));
     let replay_resp = app2.oneshot(replay_req).await.unwrap();
     assert_eq!(replay_resp.status(), StatusCode::UNAUTHORIZED);
 }

@@ -90,11 +90,8 @@ impl VoiceRuntime {
             profile.stt.model.clone(),
         ));
         let agent: Arc<dyn AgentProvider> = Arc::new(
-            CoreClient::new(
-                config.secrets.core_url,
-                config.secrets.core_auth_token,
-            )?
-            .with_tts_provider(profile.tts.provider.clone()),
+            CoreClient::new(config.secrets.core_url, config.secrets.core_auth_token)?
+                .with_tts_provider(profile.tts.provider.clone()),
         );
         let tts: Arc<dyn TtsProvider> = match profile.tts.provider.as_str() {
             "sarvam" => {

@@ -130,7 +130,9 @@ pub fn filler_for_choice_index(choice: &str, idx: usize) -> &'static str {
         "pleasantry" | "gratitude" | "none" => "",
         "check_order" | "orders_shipping" => ORDER_FILLERS[idx % ORDER_FILLERS.len()],
         "check_account" | "account_history" => ACCOUNT_FILLERS[idx % ACCOUNT_FILLERS.len()],
-        "check_inventory" | "inventory_availability" => INVENTORY_FILLERS[idx % INVENTORY_FILLERS.len()],
+        "check_inventory" | "inventory_availability" => {
+            INVENTORY_FILLERS[idx % INVENTORY_FILLERS.len()]
+        }
         "give_me_a_moment" | "actions_tasks" => ACTION_FILLERS[idx % ACTION_FILLERS.len()],
         _ => GENERAL_FILLERS[idx % GENERAL_FILLERS.len()],
     }
@@ -207,9 +209,9 @@ pub fn is_conversational_pleasantry(text: &str) -> bool {
 
     // Interrogative or task action words imply an active request, not just a pleasantry.
     let interrogatives = [
-        "what", "whats", "when", "where", "who", "why", "how", "can", "could", "would",
-        "will", "create", "schedule", "check", "tell", "find", "search", "show", "open",
-        "call", "do", "did",
+        "what", "whats", "when", "where", "who", "why", "how", "can", "could", "would", "will",
+        "create", "schedule", "check", "tell", "find", "search", "show", "open", "call", "do",
+        "did",
     ];
     if words.iter().any(|w| interrogatives.contains(w)) {
         return false;
@@ -265,12 +267,12 @@ pub fn is_conversational_pleasantry(text: &str) -> bool {
             | "nice"
             | "sweet"
     ) || cleaned.starts_with("thank")
-      || cleaned.starts_with("bye")
-      || cleaned.ends_with("thanks")
-      || cleaned.ends_with("thank you")
-      || cleaned.ends_with("great day")
-      || cleaned.ends_with("good day")
-      || cleaned.ends_with("nice day")
+        || cleaned.starts_with("bye")
+        || cleaned.ends_with("thanks")
+        || cleaned.ends_with("thank you")
+        || cleaned.ends_with("great day")
+        || cleaned.ends_with("good day")
+        || cleaned.ends_with("nice day")
 }
 
 pub fn prewarm_fillers(tts: Arc<dyn TtsProvider>) {
@@ -313,7 +315,10 @@ pub async fn play_filler(
         let mut is_first = true;
         for chunk in cached_chunks.iter() {
             output
-                .send(CallCommand::Media { bytes: chunk.clone(), generation })
+                .send(CallCommand::Media {
+                    bytes: chunk.clone(),
+                    generation,
+                })
                 .await
                 .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
             audio_playing.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -350,7 +355,10 @@ pub async fn play_filler(
     {
         let chunk_bytes = chunk?;
         output
-            .send(CallCommand::Media { bytes: chunk_bytes.clone(), generation })
+            .send(CallCommand::Media {
+                bytes: chunk_bytes.clone(),
+                generation,
+            })
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
         audio_playing.store(true, std::sync::atomic::Ordering::SeqCst);

@@ -19,8 +19,5 @@ pub enum CallCommand {
 
 #[derive(Debug)]
 pub enum SessionSignal {
-    ResponseFinished {
-        number: u64,
-        response_text: String,
-    },
+    ResponseFinished { number: u64, response_text: String },
 }

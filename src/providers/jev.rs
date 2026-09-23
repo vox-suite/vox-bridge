@@ -1,8 +1,8 @@
+use serde_json::json;
 /**
 * this file code contains typesafe jev client for structured decision evaluation
 */
 use std::time::Duration;
-use serde_json::json;
 
 use crate::voice::provider::VoiceError;
 
@@ -53,10 +53,8 @@ impl JevClient {
             });
         }
 
-        let parsed: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|err| VoiceError::Provider {
+        let parsed: serde_json::Value =
+            response.json().await.map_err(|err| VoiceError::Provider {
                 provider: "jev",
                 message: format!("failed to parse Jev response: {err}"),
             })?;
@@ -101,7 +99,9 @@ impl JevClient {
             }
         });
 
-        let parsed = self.post_system_one(&body, Duration::from_millis(500)).await?;
+        let parsed = self
+            .post_system_one(&body, Duration::from_millis(500))
+            .await?;
         let choice = parsed["answers"]["filler"]["choice"]
             .as_str()
             .unwrap_or("looking_into_that")
@@ -132,7 +132,9 @@ impl JevClient {
             }
         );
 
-        let parsed = self.post_system_one(&body, Duration::from_millis(300)).await?;
+        let parsed = self
+            .post_system_one(&body, Duration::from_millis(300))
+            .await?;
         let prob = parsed["answers"]["is_complete"]["noul"]
             .as_f64()
             .unwrap_or(0.5);
