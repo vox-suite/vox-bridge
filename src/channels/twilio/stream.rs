@@ -24,7 +24,9 @@ use crate::channels::twilio::signature::validate_twilio_signature;
 use crate::channels::twilio::webhook::{TwilioState, VOICE_STREAM_URL};
 use crate::state::AppState;
 use crate::voice::provider::VoiceError;
-use crate::voice::session::{CallCommand, CallEvent, PlaybackState, run_voice_session_with_playback};
+use crate::voice::session::{
+    CallCommand, CallEvent, PlaybackState, run_voice_session_with_playback,
+};
 
 pub fn parse_inbound(raw: &str) -> Result<InboundStreamMessage, VoiceError> {
     serde_json::from_str(raw).map_err(|_| VoiceError::Protocol("invalid Twilio event".into()))

@@ -21,7 +21,9 @@ use crate::channels::desktop::protocol::{
 };
 use crate::channels::desktop::session::DesktopSessionState;
 use crate::state::AppState;
-use crate::voice::session::{CallCommand, CallEvent, PlaybackState, run_voice_session_with_playback};
+use crate::voice::session::{
+    CallCommand, CallEvent, PlaybackState, run_voice_session_with_playback,
+};
 
 #[derive(Deserialize)]
 pub struct DesktopStreamParams {

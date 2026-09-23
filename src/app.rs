@@ -27,7 +27,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/bridge/twilio/voice", post(initialize_voice_socket))
         .route("/bridge/twilio/voice/stream", get(voice_stream_handler))
         .route("/bridge/twilio/voice/status", post(handle_voice_status))
-        .route("/bridge/desktop/voice/session", post(create_desktop_session))
+        .route(
+            "/bridge/desktop/voice/session",
+            post(create_desktop_session),
+        )
         .route("/bridge/desktop/voice/stream", get(desktop_stream_handler))
         .route(
             "/internal/v1/actions/outbound-call",

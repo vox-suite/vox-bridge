@@ -28,9 +28,8 @@ async fn health_check_returns_ok() {
     .unwrap();
 
     let voice = Arc::new(VoiceRuntime::from_config(config).unwrap());
-    let core_client = Arc::new(
-        CoreClient::new("http://127.0.0.1:3001".into(), "svc-token".into()).unwrap(),
-    );
+    let core_client =
+        Arc::new(CoreClient::new("http://127.0.0.1:3001".into(), "svc-token".into()).unwrap());
 
     let state = Arc::new(AppState {
         tx,
@@ -53,7 +52,12 @@ async fn health_check_returns_ok() {
 
     let app = build_router(state);
     let response = app
-        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);

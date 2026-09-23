@@ -17,8 +17,8 @@ use crate::voice::filler::{
 };
 use crate::voice::metrics::{TurnTiming, log_turn_latency};
 use crate::voice::provider::VoiceError;
-use crate::voice::session::playback::PlaybackState;
 use crate::voice::session::mod_types::{CallCommand, SessionSignal};
+use crate::voice::session::playback::PlaybackState;
 
 enum Spoken {
     Filler(&'static str),
@@ -225,7 +225,12 @@ async fn stream_response(
 
     if !is_opening && !is_pleasantry {
         let (choice, tone) = if let Some(client) = &jev {
-            match tokio::time::timeout(Duration::from_millis(250), client.choose_filler_and_tone(transcript)).await {
+            match tokio::time::timeout(
+                Duration::from_millis(250),
+                client.choose_filler_and_tone(transcript),
+            )
+            .await
+            {
                 Ok(Ok((c, t))) => (c, t),
                 Ok(Err(err)) => {
                     tracing::warn!(error = %err, "Jev filler choice failed, using fallback");
@@ -404,7 +409,10 @@ async fn play_sentence(
         }
         let chunk_bytes = chunk?;
         output
-            .send(CallCommand::Media { bytes: chunk_bytes, generation })
+            .send(CallCommand::Media {
+                bytes: chunk_bytes,
+                generation,
+            })
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
 

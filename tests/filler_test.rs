@@ -67,14 +67,8 @@ fn maps_jev_choices_to_prewarmed_filler_phrases() {
         filler_for_choice("unknown_choice"),
         "I'm looking into that."
     );
-    assert_eq!(
-        filler_for_choice("pleasantry"),
-        ""
-    );
-    assert_eq!(
-        filler_for_choice("gratitude"),
-        ""
-    );
+    assert_eq!(filler_for_choice("pleasantry"), "");
+    assert_eq!(filler_for_choice("gratitude"), "");
 }
 
 #[test]
@@ -98,8 +92,14 @@ fn identifies_conversational_pleasantries() {
     assert!(is_conversational_pleasantry("Awesome, thanks."));
 
     // Real queries or requests must NOT be classified as pleasantries
-    assert!(!is_conversational_pleasantry("What did I ask you to do in our last call?"));
+    assert!(!is_conversational_pleasantry(
+        "What did I ask you to do in our last call?"
+    ));
     assert!(!is_conversational_pleasantry("Can you check my order?"));
-    assert!(!is_conversational_pleasantry("Where is the nearest coffee shop?"));
-    assert!(!is_conversational_pleasantry("I want to go on a bike ride today at 8 PM"));
+    assert!(!is_conversational_pleasantry(
+        "Where is the nearest coffee shop?"
+    ));
+    assert!(!is_conversational_pleasantry(
+        "I want to go on a bike ride today at 8 PM"
+    ));
 }

@@ -1,11 +1,7 @@
 /**
 * this file code contains tests for typesafe jev client and filler evaluation
 */
-use axum::{
-    Json, Router,
-    extract::Json as ExtractJson,
-    routing::post,
-};
+use axum::{Json, Router, extract::Json as ExtractJson, routing::post};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use vox_bridge::providers::jev::JevClient;
@@ -85,10 +81,16 @@ async fn evaluates_thought_completeness_with_noul() {
     let client = JevClient::new(http, "test-api-key".into())
         .with_endpoint(format!("http://127.0.0.1:{port}/v1/systemone"));
 
-    let prob_complete = client.is_complete_thought("What time do you open?").await.unwrap();
+    let prob_complete = client
+        .is_complete_thought("What time do you open?")
+        .await
+        .unwrap();
     assert!(prob_complete > 0.85);
 
-    let prob_incomplete = client.is_complete_thought("I was wondering if and").await.unwrap();
+    let prob_incomplete = client
+        .is_complete_thought("I was wondering if and")
+        .await
+        .unwrap();
     assert!(prob_incomplete < 0.35);
 }
 

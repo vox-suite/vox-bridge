@@ -49,8 +49,7 @@ pub async fn run_voice_session_with_playback(
 
     let (signal_tx, mut signal_rx) = mpsc::channel(64);
     let (speculation_tx, speculation_rx) = watch::channel(None);
-    let _speculation_watcher =
-        spawn_speculation_watcher(speculation_rx, providers.agent.clone());
+    let _speculation_watcher = spawn_speculation_watcher(speculation_rx, providers.agent.clone());
 
     let audio_playing = Arc::new(AtomicBool::new(false));
     let answer_started = Arc::new(AtomicBool::new(false));

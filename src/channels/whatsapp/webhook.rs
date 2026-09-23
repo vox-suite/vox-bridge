@@ -160,21 +160,75 @@ pub async fn wa_receive(
                                 tts_provider: None,
                                 filler: None,
                             };
-                            if let Ok(reply) = state.core_client.respond(&context, &body).await {
-                                let token = state
-                                    .whatsapp_access_token
-                                    .clone()
-                                    .or_else(|| std::env::var("WHATSAPP_ACCESS_KEY").ok())
-                                    .unwrap_or_default();
-                                let phone_id = state
-                                    .whatsapp_phone_id
-                                    .clone()
-                                    .or_else(|| std::env::var("WHATSAPP_PHONE_ID").ok())
-                                    .unwrap_or_default();
-                                let _ =
-                                    send_whatsapp_message(&token, &phone_id, from.as_str(), &reply)
-                                        .await;
-                            }
+                            let command =
+                                crate::channels::interaction::parse_channel_command(&body);
+                            let reply = match command {
+                                crate::channels::interaction::ChannelCommand::Approve { proposal_id } => {
+                                    match crate::channels::interaction::ChannelInteractionHandler::handle_approve(
+                                        &state.core_client,
+                                        &context,
+                                        &from,
+                                        proposal_id,
+                                        serde_json::json!({}),
+                                    )
+                                    .await
+                                    {
+                                        Ok(msg) => msg,
+                                        Err(err) => err.to_string(),
+                                    }
+                                }
+                                crate::channels::interaction::ChannelCommand::Reject { proposal_id } => {
+                                    format!("Proposal [{proposal_id}] was rejected. No action was executed.")
+                                }
+                                crate::channels::interaction::ChannelCommand::Status { task_id: Some(id) } => {
+                                    match crate::channels::interaction::ChannelInteractionHandler::handle_status(
+                                        &state.core_client,
+                                        &context,
+                                        &from,
+                                        id,
+                                    )
+                                    .await
+                                    {
+                                        Ok(msg) => msg,
+                                        Err(err) => err.to_string(),
+                                    }
+                                }
+                                crate::channels::interaction::ChannelCommand::Status { task_id: None } => {
+                                    "Please provide the task ID to check status: 'status <task-uuid>'".to_string()
+                                }
+                                crate::channels::interaction::ChannelCommand::Clarify { text, .. } => {
+                                    let clarify_prompt = format!("User clarification: {text}");
+                                    match state.core_client.respond(&context, &clarify_prompt).await {
+                                        Ok(rep) => rep,
+                                        Err(err) => crate::channels::interaction::UncertaintyNarrator::unconfirmed_outcome(
+                                            "clarification submission",
+                                            &err.to_string(),
+                                        ),
+                                    }
+                                }
+                                crate::channels::interaction::ChannelCommand::Text(_) => {
+                                    match state.core_client.respond(&context, &body).await {
+                                        Ok(rep) => rep,
+                                        Err(err) => crate::channels::interaction::UncertaintyNarrator::unconfirmed_outcome(
+                                            "your message",
+                                            &err.to_string(),
+                                        ),
+                                    }
+                                }
+                            };
+
+                            let token = state
+                                .whatsapp_access_token
+                                .clone()
+                                .or_else(|| std::env::var("WHATSAPP_ACCESS_KEY").ok())
+                                .unwrap_or_default();
+                            let phone_id = state
+                                .whatsapp_phone_id
+                                .clone()
+                                .or_else(|| std::env::var("WHATSAPP_PHONE_ID").ok())
+                                .unwrap_or_default();
+                            let _ = send_whatsapp_message(&token, &phone_id, from.as_str(), &reply)
+                                .await;
                         }
                     }
                 }
