@@ -1,5 +1,6 @@
-// this file code contains whatsapp message delivery client
-
+/**
+* this file code contains whatsapp message delivery client
+*/
 pub async fn send_whatsapp_message(
     token: &str,
     phone_id: &str,

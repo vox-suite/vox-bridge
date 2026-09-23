@@ -1,5 +1,6 @@
-// this file code contains server sent events parser for core streaming
-
+/**
+* this file code contains server sent events parser for core streaming
+*/
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt, stream};
 

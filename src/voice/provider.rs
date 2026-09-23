@@ -1,11 +1,12 @@
-// this file code contains voice provider types and traits
-
+/**
+* this file code contains voice provider types and traits
+*/
 pub use crate::channels::context::CallContext;
 pub use crate::core::{
-    ConversationClient as AgentProvider, ConversationClient,
-    ConversationEvent as AgentEvent, ConversationEvent, ConversationEventStream as AgentEventStream,
-    TextStream,
+    ConversationClient as AgentProvider, ConversationClient, ConversationEvent as AgentEvent,
+    ConversationEvent, ConversationEventStream as AgentEventStream, TextStream,
 };
+pub use crate::providers::jev::JevClient;
 pub use crate::providers::stt::{SttEvent, SttProvider, SttSession};
 pub use crate::providers::tts::{AudioStream, TtsProvider};
 pub use crate::voice::registry::ProviderSet as VoiceProviders;

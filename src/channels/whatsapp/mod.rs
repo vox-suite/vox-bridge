@@ -1,5 +1,6 @@
-// this file code contains whatsapp channel components and reexports
-
+/**
+* this file code contains whatsapp channel components and reexports
+*/
 pub mod client;
 pub mod webhook;
 

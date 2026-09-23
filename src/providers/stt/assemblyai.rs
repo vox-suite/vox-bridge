@@ -1,5 +1,6 @@
-// this file code contains assemblyai realtime speech to text provider
-
+/**
+* this file code contains assemblyai realtime speech to text provider
+*/
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt, stream::SplitSink, stream::SplitStream};

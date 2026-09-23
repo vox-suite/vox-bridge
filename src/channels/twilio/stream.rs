@@ -1,5 +1,6 @@
-// this file code contains twilio websocket audio stream handling
-
+/**
+* this file code contains twilio websocket audio stream handling
+*/
 use axum::{
     extract::{
         State, WebSocketUpgrade,
@@ -23,7 +24,7 @@ use crate::channels::twilio::signature::validate_twilio_signature;
 use crate::channels::twilio::webhook::{TwilioState, VOICE_STREAM_URL};
 use crate::state::AppState;
 use crate::voice::provider::VoiceError;
-use crate::voice::session::{CallCommand, CallEvent, run_voice_session};
+use crate::voice::session::{CallCommand, CallEvent, PlaybackState, run_voice_session_with_playback};
 
 pub fn parse_inbound(raw: &str) -> Result<InboundStreamMessage, VoiceError> {
     serde_json::from_str(raw).map_err(|_| VoiceError::Protocol("invalid Twilio event".into()))
@@ -31,14 +32,14 @@ pub fn parse_inbound(raw: &str) -> Result<InboundStreamMessage, VoiceError> {
 
 pub fn serialize_command(stream_sid: &str, command: &CallCommand) -> Result<String, VoiceError> {
     let result = match command {
-        CallCommand::Media(audio) => serde_json::to_string(&OutboundMediaMessage {
+        CallCommand::Media { bytes, .. } => serde_json::to_string(&OutboundMediaMessage {
             event: "media",
             stream_sid,
             media: OutboundPayload {
-                payload: &STANDARD.encode(audio),
+                payload: &STANDARD.encode(bytes),
             },
         }),
-        CallCommand::Mark(name) => serde_json::to_string(&OutboundMarkMessage {
+        CallCommand::Mark { name, .. } => serde_json::to_string(&OutboundMarkMessage {
             event: "mark",
             stream_sid,
             mark: OutboundMark { name },
@@ -123,19 +124,21 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         external_identity: accepted_call.from,
         external_conversation_id: accepted_call.external_conversation_id.clone(),
         initiation_context: accepted_call.opening_instruction.clone(),
-        voice_signature: None,
         turn_id: None,
         revision: None,
         tts_provider: Some(profile.tts.provider.clone()),
+        filler: None,
     };
     let providers = state.voice.providers.providers_for(&profile)?;
+    let playback = Arc::new(PlaybackState::new());
     let (input_tx, input_rx) = mpsc::channel(64);
     let (output_tx, mut output_rx) = mpsc::channel(64);
-    let mut voice_task = tokio::spawn(run_voice_session(
+    let mut voice_task = tokio::spawn(run_voice_session_with_playback(
         providers.clone(),
         context.clone(),
         input_rx,
         output_tx,
+        playback.clone(),
     ));
     let result = async {
         loop {
@@ -171,8 +174,26 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                 }
                 command = output_rx.recv() => {
                     match command {
-                        Some(command) => {
-                            let message = serialize_command(&stream_sid, &command)?;
+                        Some(CallCommand::Media { bytes, generation }) => {
+                            if playback.accepts(generation) {
+                                let message = serialize_command(&stream_sid, &CallCommand::Media { bytes, generation })?;
+                                sender.send(Message::Text(message.into())).await
+                                    .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
+                            } else {
+                                tracing::debug!(generation, "Discarding stale media for invalidated playback generation");
+                            }
+                        }
+                        Some(CallCommand::Mark { name, generation }) => {
+                            if playback.accepts(generation) {
+                                let message = serialize_command(&stream_sid, &CallCommand::Mark { name, generation })?;
+                                sender.send(Message::Text(message.into())).await
+                                    .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
+                            } else {
+                                tracing::debug!(generation, "Discarding stale mark for invalidated playback generation");
+                            }
+                        }
+                        Some(CallCommand::Clear) => {
+                            let message = serialize_command(&stream_sid, &CallCommand::Clear)?;
                             sender.send(Message::Text(message.into())).await
                                 .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
                         }

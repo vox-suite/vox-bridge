@@ -1,5 +1,6 @@
-// this file code contains sentence chunking logic using unicode segmentation
-
+/**
+* this file code contains sentence chunking logic using unicode segmentation
+*/
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Default)]

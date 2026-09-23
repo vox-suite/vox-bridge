@@ -1,8 +1,10 @@
-// this file code contains voice runtime and provider registry initialization
-
+/**
+* this file code contains voice runtime and provider registry initialization
+*/
 use std::{collections::HashMap, sync::Arc};
 
 use crate::core::client::CoreClient;
+use crate::providers::jev::JevClient;
 use crate::providers::stt::assemblyai::AssemblyAiStt;
 use crate::providers::tts::elevenlabs::{ElevenLabsSettings, ElevenLabsTts};
 use crate::providers::tts::sarvam::{SarvamSettings, SarvamTts};
@@ -27,6 +29,8 @@ pub struct ProviderRegistry {
     pub stt: HashMap<String, Arc<dyn SttProvider>>,
     pub agents: HashMap<String, Arc<dyn AgentProvider>>,
     pub tts: HashMap<String, Arc<dyn TtsProvider>>,
+    pub filler_tts: Arc<dyn TtsProvider>,
+    pub jev: Option<Arc<JevClient>>,
 }
 
 #[derive(Clone)]
@@ -34,6 +38,8 @@ pub struct ProviderSet {
     pub stt: Arc<dyn SttProvider>,
     pub agent: Arc<dyn AgentProvider>,
     pub tts: Arc<dyn TtsProvider>,
+    pub filler_tts: Arc<dyn TtsProvider>,
+    pub jev: Option<Arc<JevClient>>,
 }
 
 impl ProviderRegistry {
@@ -53,7 +59,13 @@ impl ProviderRegistry {
             .get(&profile.tts.provider)
             .cloned()
             .ok_or_else(|| unregistered("TTS", &profile.tts.provider))?;
-        Ok(ProviderSet { stt, agent, tts })
+        Ok(ProviderSet {
+            stt,
+            agent,
+            tts,
+            filler_tts: self.filler_tts.clone(),
+            jev: self.jev.clone(),
+        })
     }
 }
 
@@ -80,9 +92,7 @@ impl VoiceRuntime {
         let agent: Arc<dyn AgentProvider> = Arc::new(
             CoreClient::new(
                 config.secrets.core_url,
-                config.secrets.core_host_credential_id,
-                config.secrets.core_host_audience,
-                config.secrets.core_host_secret,
+                config.secrets.core_auth_token,
             )?
             .with_tts_provider(profile.tts.provider.clone()),
         );
@@ -93,7 +103,7 @@ impl VoiceRuntime {
                     .sarvam_api_key
                     .ok_or_else(|| VoiceError::Configuration("SARVAM_API_KEY is missing".into()))?;
                 Arc::new(SarvamTts::new(
-                    http,
+                    http.clone(),
                     api_key,
                     "https://api.sarvam.ai".into(),
                     SarvamSettings {
@@ -105,15 +115,15 @@ impl VoiceRuntime {
                 ))
             }
             "elevenlabs" => {
-                let api_key = config.secrets.elevenlabs_api_key.ok_or_else(|| {
+                let api_key = config.secrets.elevenlabs_api_key.as_ref().ok_or_else(|| {
                     VoiceError::Configuration("ELEVENLABS_API_KEY is missing".into())
                 })?;
                 let endpoint = "https://api.elevenlabs.io".to_string();
                 let output_format = std::env::var("ELEVENLABS_OUTPUT_FORMAT")
                     .unwrap_or_else(|_| "mp3_44100_128".to_string());
                 Arc::new(ElevenLabsTts::new(
-                    http,
-                    api_key,
+                    http.clone(),
+                    api_key.clone(),
                     endpoint,
                     ElevenLabsSettings {
                         model: profile.tts.model.clone(),
@@ -129,11 +139,45 @@ impl VoiceRuntime {
                 )));
             }
         };
+
+        let filler_tts: Arc<dyn TtsProvider> = if profile.tts.provider == "elevenlabs" {
+            if let (Some(filler_voice_id), Some(api_key)) = (
+                config.secrets.elevenlabs_filler_voice_id.as_ref(),
+                config.secrets.elevenlabs_api_key.as_ref(),
+            ) {
+                let endpoint = "https://api.elevenlabs.io".to_string();
+                let output_format = std::env::var("ELEVENLABS_OUTPUT_FORMAT")
+                    .unwrap_or_else(|_| "mp3_44100_128".to_string());
+                Arc::new(ElevenLabsTts::new(
+                    http.clone(),
+                    api_key.clone(),
+                    endpoint,
+                    ElevenLabsSettings {
+                        model: profile.tts.model.clone(),
+                        voice_id: filler_voice_id.clone(),
+                        output_format,
+                        voice_settings: None,
+                    },
+                ))
+            } else {
+                tts.clone()
+            }
+        } else {
+            tts.clone()
+        };
+
+        let jev = config
+            .secrets
+            .typesafe_api_key
+            .map(|key| Arc::new(JevClient::new(http, key)));
+
         Ok(Self {
             providers: Arc::new(ProviderRegistry {
                 stt: HashMap::from([(profile.stt.provider.clone(), stt)]),
                 agents: HashMap::from([(profile.agent.provider.clone(), agent)]),
                 tts: HashMap::from([(profile.tts.provider.clone(), tts)]),
+                filler_tts,
+                jev,
             }),
             resolver: Arc::new(StaticVoiceProfileResolver { profile }),
         })

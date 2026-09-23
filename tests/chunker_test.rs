@@ -1,5 +1,6 @@
-// this file code contains tests for sentence chunking and boundary detection
-
+/**
+* this file code contains tests for sentence chunking and boundary detection
+*/
 use vox_bridge::voice::chunker::{SentenceChunker, is_abbreviation};
 
 #[test]
@@ -40,6 +41,9 @@ fn breaks_long_clauses_for_low_latency() {
     let mut chunker = SentenceChunker::new();
     let res = chunker.push("Here is an exceptionally long introductory clause that has many words, and then another part.");
     assert_eq!(res.len(), 2);
-    assert_eq!(res[0], "Here is an exceptionally long introductory clause that has many words,");
+    assert_eq!(
+        res[0],
+        "Here is an exceptionally long introductory clause that has many words,"
+    );
     assert_eq!(res[1], "and then another part.");
 }

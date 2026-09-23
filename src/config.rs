@@ -1,5 +1,6 @@
-// this file code contains bridge application configuration
-
+/**
+* this file code contains bridge application configuration
+*/
 use crate::voice::config::VoiceConfig;
 use crate::voice::provider::VoiceError;
 
@@ -21,10 +22,9 @@ impl AppConfig {
     pub fn from_env() -> Result<Self, VoiceError> {
         let voice = VoiceConfig::from_env()?;
         let twilio_account_sid = std::env::var("TWILIO_ACCOUNT_SID").unwrap_or_default();
-        let twilio_auth_token =
-            std::env::var("TWILIO_AUTH_TOKEN").unwrap_or_default();
+        let twilio_auth_token = std::env::var("TWILIO_AUTH_TOKEN").unwrap_or_default();
         let twilio_from_number = std::env::var("TWILIO_FROM_NUMBER").unwrap_or_default();
-        let service_token = std::env::var("VOX_BRIDGE_SERVICE_TOKEN").unwrap_or_default();
+        let service_token = std::env::var("VOX_AUTH_TOKEN").unwrap_or_default();
         let port = std::env::var("PORT")
             .ok()
             .and_then(|p| p.parse().ok())

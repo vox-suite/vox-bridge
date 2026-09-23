@@ -1,5 +1,6 @@
-// this file code contains whatsapp webhook verification and receipt handlers
-
+/**
+* this file code contains whatsapp webhook verification and receipt handlers
+*/
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -154,10 +155,10 @@ pub async fn wa_receive(
                                 initiation_context: profile_name
                                     .as_ref()
                                     .map(|n| format!("whatsapp_name:{n}")),
-                                voice_signature: None,
                                 turn_id: None,
                                 revision: None,
                                 tts_provider: None,
+                                filler: None,
                             };
                             if let Ok(reply) = state.core_client.respond(&context, &body).await {
                                 let token = state
@@ -170,13 +171,9 @@ pub async fn wa_receive(
                                     .clone()
                                     .or_else(|| std::env::var("WHATSAPP_PHONE_ID").ok())
                                     .unwrap_or_default();
-                                let _ = send_whatsapp_message(
-                                    &token,
-                                    &phone_id,
-                                    from.as_str(),
-                                    &reply,
-                                )
-                                .await;
+                                let _ =
+                                    send_whatsapp_message(&token, &phone_id, from.as_str(), &reply)
+                                        .await;
                             }
                         }
                     }

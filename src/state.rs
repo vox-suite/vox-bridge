@@ -1,14 +1,17 @@
-// this file code contains application state shared across channels
-
+/**
+* this file code contains application state shared across channels
+*/
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+use crate::channels::desktop::DesktopSessionState;
 use crate::channels::twilio::webhook::TwilioState;
 use crate::core::client::CoreClient;
 use crate::providers::telephony::TelephonyClient;
 use crate::voice::registry::VoiceRuntime;
 
+#[derive(Clone)]
 pub struct AppState {
     pub tx: broadcast::Sender<String>,
     pub twilio: Arc<DashMap<String, TwilioState>>,
@@ -24,4 +27,6 @@ pub struct AppState {
     pub whatsapp_app_secret: Option<String>,
     pub whatsapp_access_token: Option<String>,
     pub whatsapp_phone_id: Option<String>,
+    pub desktop_sessions: Arc<DashMap<String, DesktopSessionState>>,
+    pub desktop_auth_token: Option<String>,
 }

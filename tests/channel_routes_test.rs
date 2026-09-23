@@ -1,5 +1,6 @@
-// this file code contains tests for application routing and endpoints
-
+/**
+* this file code contains tests for application routing and endpoints
+*/
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use dashmap::DashMap;
@@ -17,13 +18,10 @@ use vox_bridge::voice::registry::VoiceRuntime;
 async fn health_check_returns_ok() {
     let (tx, _rx) = broadcast::channel(16);
     let twilio = Arc::new(DashMap::new());
-    let cred_id = "f7f90d3d-5ded-4acf-850f-650bcb965fd1".to_string();
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("key".into()),
         "VOX_CORE_URL" => Some("http://127.0.0.1:3001".into()),
-        "VOX_CORE_HOST_CREDENTIAL_ID" => Some("f7f90d3d-5ded-4acf-850f-650bcb965fd1".into()),
-        "VOX_CORE_HOST_AUDIENCE" => Some("aud".into()),
-        "VOX_CORE_HOST_SECRET" => Some("sec".into()),
+        "VOX_AUTH_TOKEN" => Some("svc-token".into()),
         "ELEVENLABS_API_KEY" => Some("el-key".into()),
         _ => None,
     })
@@ -31,13 +29,7 @@ async fn health_check_returns_ok() {
 
     let voice = Arc::new(VoiceRuntime::from_config(config).unwrap());
     let core_client = Arc::new(
-        CoreClient::new(
-            "http://127.0.0.1:3001".into(),
-            cred_id,
-            "aud".into(),
-            "sec".into(),
-        )
-        .unwrap(),
+        CoreClient::new("http://127.0.0.1:3001".into(), "svc-token".into()).unwrap(),
     );
 
     let state = Arc::new(AppState {
@@ -51,23 +43,18 @@ async fn health_check_returns_ok() {
         telephony: None,
         voice,
         core_client,
-        whatsapp_verify_token: Some("verify-token".into()),
+        whatsapp_verify_token: None,
         whatsapp_app_secret: None,
         whatsapp_access_token: None,
         whatsapp_phone_id: None,
+        desktop_sessions: Arc::new(DashMap::new()),
+        desktop_auth_token: None,
     });
 
     let app = build_router(state);
-
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/health")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
         .await
         .unwrap();
-
     assert_eq!(response.status(), StatusCode::OK);
 }

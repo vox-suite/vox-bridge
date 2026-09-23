@@ -1,7 +1,8 @@
-// this file code contains tests for conversational turn settling and drafting
-
+/**
+* this file code contains tests for conversational turn settling and drafting
+*/
 use std::time::Duration;
-use vox_bridge::voice::turn::DraftTurn;
+use vox_bridge::voice::turn::{DraftTurn, is_backchannel};
 
 #[test]
 fn updates_partial_transcript() {
@@ -41,4 +42,33 @@ fn settles_slower_for_numeric_input() {
     let mut turn = DraftTurn::default();
     turn.finish("one two three four");
     assert_eq!(turn.settle_delay(), Duration::from_millis(1200));
+}
+
+#[test]
+fn identifies_backchannels_accurately() {
+    assert!(is_backchannel("uh-huh"));
+    assert!(is_backchannel("yeah"));
+    assert!(is_backchannel("okay"));
+    assert!(is_backchannel("mhm"));
+    assert!(is_backchannel("got it"));
+    assert!(!is_backchannel("stop talking"));
+    assert!(!is_backchannel("I have a question"));
+}
+
+#[test]
+fn dynamic_settling_adjusts_by_completeness() {
+    let mut turn = DraftTurn::default();
+    turn.finish("what is the weather today");
+    assert_eq!(
+        turn.settle_delay_for_completeness(Some(0.92)),
+        Duration::from_millis(160)
+    );
+    assert_eq!(
+        turn.settle_delay_for_completeness(Some(0.20)),
+        Duration::from_millis(1100)
+    );
+    assert_eq!(
+        turn.settle_delay_for_completeness(None),
+        Duration::from_millis(350)
+    );
 }

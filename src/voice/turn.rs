@@ -1,5 +1,6 @@
-// this file code contains conversational turn assembly and settling
-
+/**
+* this file code contains conversational turn assembly and settling
+*/
 use std::time::Duration;
 
 #[derive(Clone, Debug)]
@@ -103,4 +104,40 @@ impl DraftTurn {
         });
         Duration::from_millis(if numeric { 1200 } else { 350 })
     }
+
+    pub fn settle_delay_for_completeness(&self, completeness: Option<f64>) -> Duration {
+        if let Some(score) = completeness {
+            if score >= 0.85 {
+                return Duration::from_millis(160);
+            }
+            if score < 0.35 {
+                return Duration::from_millis(1100);
+            }
+        }
+        self.settle_delay()
+    }
+}
+
+pub fn is_backchannel(text: &str) -> bool {
+    let lower = text.trim().to_ascii_lowercase();
+    let cleaned = lower.trim_matches(|c: char| !c.is_alphanumeric());
+    matches!(
+        cleaned,
+        "uh huh"
+            | "uh-huh"
+            | "uhhuh"
+            | "yeah"
+            | "yep"
+            | "yes"
+            | "ok"
+            | "okay"
+            | "right"
+            | "got it"
+            | "mhm"
+            | "mm hmm"
+            | "mm-hmm"
+            | "sure"
+            | "cool"
+            | "fine"
+    )
 }

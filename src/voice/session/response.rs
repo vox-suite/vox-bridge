@@ -1,5 +1,6 @@
-// this file code contains agent response streaming and tts synthesis
-
+/**
+* this file code contains agent response streaming and tts synthesis
+*/
 use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,13 +8,23 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::channels::context::CallContext;
-use crate::core::{ConversationClient, ConversationEvent};
+use crate::core::{ConversationClient, ConversationEvent, ConversationEventStream};
+use crate::providers::jev::JevClient;
 use crate::providers::tts::TtsProvider;
 use crate::voice::chunker::SentenceChunker;
-use crate::voice::filler::{play_filler, strip_leading_ack};
+use crate::voice::filler::{
+    is_conversational_pleasantry, play_filler, rotate_filler_for_choice_and_tone, strip_leading_ack,
+};
 use crate::voice::metrics::{TurnTiming, log_turn_latency};
 use crate::voice::provider::VoiceError;
+use crate::voice::session::playback::PlaybackState;
 use crate::voice::session::mod_types::{CallCommand, SessionSignal};
+
+enum Spoken {
+    Filler(&'static str),
+    Sentence(String),
+    Mark(String),
+}
 
 struct ResponseLifecycle {
     number: u64,
@@ -42,10 +53,13 @@ pub fn spawn_response(
     timing: Option<TurnTiming>,
     agent: Arc<dyn ConversationClient>,
     tts: Arc<dyn TtsProvider>,
+    filler_tts: Arc<dyn TtsProvider>,
+    jev: Option<Arc<JevClient>>,
     output: mpsc::Sender<CallCommand>,
     signal: mpsc::Sender<SessionSignal>,
     audio_playing: Arc<std::sync::atomic::AtomicBool>,
     answer_started: Arc<std::sync::atomic::AtomicBool>,
+    playback: Arc<PlaybackState>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut lifecycle = ResponseLifecycle {
@@ -61,21 +75,32 @@ pub fn spawn_response(
             timing,
             agent,
             tts,
+            filler_tts,
+            jev,
             output,
             audio_playing.clone(),
             answer_started,
+            playback,
         )
         .await;
-        lifecycle.outcome = if result.is_ok() {
-            "completed"
-        } else {
-            "failed"
+        let response_text = match &result {
+            Ok(text) => {
+                lifecycle.outcome = "completed";
+                text.clone()
+            }
+            Err(error) => {
+                lifecycle.outcome = "failed";
+                audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
+                tracing::warn!(provider_error = %error, "voice response failed");
+                String::new()
+            }
         };
-        if let Err(error) = result {
-            audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
-            tracing::warn!(provider_error = %error, "voice response failed");
-        }
-        let _ = signal.send(SessionSignal::ResponseFinished(number)).await;
+        let _ = signal
+            .send(SessionSignal::ResponseFinished {
+                number,
+                response_text,
+            })
+            .await;
     })
 }
 
@@ -87,10 +112,13 @@ async fn stream_response(
     timing: Option<TurnTiming>,
     agent: Arc<dyn ConversationClient>,
     tts: Arc<dyn TtsProvider>,
+    filler_tts: Arc<dyn TtsProvider>,
+    jev: Option<Arc<JevClient>>,
     output: mpsc::Sender<CallCommand>,
     audio_playing: Arc<std::sync::atomic::AtomicBool>,
     answer_started: Arc<std::sync::atomic::AtomicBool>,
-) -> Result<(), VoiceError> {
+    playback: Arc<PlaybackState>,
+) -> Result<String, VoiceError> {
     let turn_started_at = std::time::Instant::now();
     let llm_request_start = std::time::Instant::now();
 
@@ -100,6 +128,86 @@ async fn stream_response(
         prompt = %transcript,
         "Voice pipeline: processing turn"
     );
+
+    let generation = playback.current_generation();
+    let (spoken_tx, mut spoken_rx) = mpsc::channel(8);
+    let player_output = output.clone();
+    let player_tts = tts.clone();
+    let player_filler_tts = filler_tts.clone();
+    let player_audio = audio_playing.clone();
+    let player_answer = answer_started.clone();
+    let player_playback = playback.clone();
+    let response_mark = format!("response-{number}");
+    let player = tokio::spawn(async move {
+        let mut first_tts_ttfb_ms = None;
+        let mut first_audio_sent_at = None;
+        let mut filler_audio_at = None;
+        while let Some(job) = spoken_rx.recv().await {
+            if !player_playback.accepts(generation) {
+                break;
+            }
+            match job {
+                Spoken::Filler(phrase) => {
+                    if play_filler(
+                        phrase,
+                        player_filler_tts.as_ref(),
+                        &player_output,
+                        &mut filler_audio_at,
+                        &player_audio,
+                        generation,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        break;
+                    }
+                }
+                Spoken::Sentence(sentence) => {
+                    match play_sentence(
+                        &sentence,
+                        player_tts.as_ref(),
+                        &player_output,
+                        &mut first_audio_sent_at,
+                        &player_audio,
+                        &player_answer,
+                        &player_playback,
+                        generation,
+                    )
+                    .await
+                    {
+                        Ok(ttfb) => {
+                            if first_tts_ttfb_ms.is_none() {
+                                first_tts_ttfb_ms = Some(ttfb);
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(error = %err, sentence = %sentence, "TTS synthesis failed for sentence, continuing turn");
+                        }
+                    }
+                }
+                Spoken::Mark(name) => {
+                    if player_output
+                        .send(CallCommand::Mark { name, generation })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        if player_playback.accepts(generation)
+            && (first_audio_sent_at.is_some() || filler_audio_at.is_some())
+        {
+            let _ = player_output
+                .send(CallCommand::Mark {
+                    name: response_mark,
+                    generation,
+                })
+                .await;
+        }
+        (first_tts_ttfb_ms, first_audio_sent_at, filler_audio_at)
+    });
 
     let mut chunker = SentenceChunker::new();
     let mut first_token_at: Option<std::time::Instant> = None;
@@ -111,33 +219,70 @@ async fn stream_response(
     let mut sentence_count = 0usize;
 
     let mut filler_played = false;
-    let mut filler_audio_at = None;
-    let mut lookup_deadline = None;
-    let mut text_stream = tokio::time::timeout(
+    let is_opening = number == 1 || transcript == "The call just connected. Greet the user.";
+    let is_pleasantry = is_conversational_pleasantry(transcript);
+    let mut mut_context = context.clone();
+
+    if !is_opening && !is_pleasantry {
+        let (choice, tone) = if let Some(client) = &jev {
+            match tokio::time::timeout(Duration::from_millis(250), client.choose_filler_and_tone(transcript)).await {
+                Ok(Ok((c, t))) => (c, t),
+                Ok(Err(err)) => {
+                    tracing::warn!(error = %err, "Jev filler choice failed, using fallback");
+                    ("looking_into_that".to_string(), "calm".to_string())
+                }
+                Err(_) => {
+                    tracing::warn!("Jev filler choice timed out, using fallback");
+                    ("looking_into_that".to_string(), "calm".to_string())
+                }
+            }
+        } else {
+            ("looking_into_that".to_string(), "calm".to_string())
+        };
+
+        let filler_phrase = rotate_filler_for_choice_and_tone(&choice, &tone);
+        if !filler_phrase.is_empty() {
+            filler_played = true;
+            mut_context.filler = Some(filler_phrase.to_string());
+            spoken_tx
+                .send(Spoken::Filler(filler_phrase))
+                .await
+                .map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
+            spoken_tx
+                .send(Spoken::Mark(format!("filler-{number}")))
+                .await
+                .map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
+            tracing::info!(
+                turn = number,
+                phrase = filler_phrase,
+                choice = %choice,
+                tone = %tone,
+                "VOICE_LOOKUP_ACKNOWLEDGED"
+            );
+        }
+    }
+
+    let mut connect_future = Box::pin(tokio::time::timeout(
         Duration::from_secs(30),
-        agent.respond_events(context, transcript),
-    )
-    .await
-    .map_err(|_| VoiceError::Timeout("Core response"))??;
+        agent.respond_events(&mut_context, transcript),
+    ));
+    let mut text_stream: Option<ConversationEventStream> = None;
 
     loop {
         let next = tokio::select! {
             biased;
-            result = tokio::time::timeout(Duration::from_secs(30), text_stream.next()) => {
-                result.map_err(|_| VoiceError::Timeout("Core stream"))?
-            }
-            _ = async {
-                match lookup_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline).await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
-                lookup_deadline = None;
-                filler_played = true;
-                play_filler("I'm looking into that.", tts.as_ref(), &output, &mut filler_audio_at, &audio_playing).await?;
-                output.send(CallCommand::Mark(format!("filler-{number}"))).await.map_err(|_| VoiceError::Protocol("call output closed".into()))?;
-                tracing::info!(turn = number, filler_audio_ms = ?filler_audio_at.map(|at| at.duration_since(turn_started_at).as_millis()), "VOICE_LOOKUP_ACKNOWLEDGED");
+            res = &mut connect_future, if text_stream.is_none() => {
+                let stream_res = res.map_err(|_| VoiceError::Timeout("Core response"))?;
+                text_stream = Some(stream_res?);
                 continue;
+            }
+            result = async {
+                match text_stream.as_mut() {
+                    Some(s) => tokio::time::timeout(Duration::from_secs(30), s.next()).await,
+                    None => std::future::pending().await,
+                }
+            }, if text_stream.is_some() => {
+                result.map_err(|_| VoiceError::Timeout("Core stream"))?
             }
         };
         let Some(event) = next else {
@@ -145,17 +290,12 @@ async fn stream_response(
         };
         let chunk = match event? {
             ConversationEvent::LookupPending => {
-                if !filler_played && first_token_at.is_none() && lookup_deadline.is_none() {
-                    lookup_deadline =
-                        Some(tokio::time::Instant::now() + Duration::from_millis(400));
-                }
                 continue;
             }
             ConversationEvent::Text(text) => {
                 if text.trim().is_empty() {
                     continue;
                 }
-                lookup_deadline = None;
                 text
             }
         };
@@ -181,25 +321,10 @@ async fn stream_response(
                 first_sentence_at = Some(std::time::Instant::now());
                 first_sentence_text = Some(trimmed.to_string());
             }
-            match play_sentence(
-                trimmed,
-                tts.as_ref(),
-                &output,
-                &mut first_audio_sent_at,
-                &audio_playing,
-                &answer_started,
-            )
-            .await
-            {
-                Ok(ttfb) => {
-                    if first_tts_ttfb_ms.is_none() {
-                        first_tts_ttfb_ms = Some(ttfb);
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, sentence = %trimmed, "TTS synthesis failed for sentence, continuing turn");
-                }
-            }
+            spoken_tx
+                .send(Spoken::Sentence(trimmed.to_string()))
+                .await
+                .map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
         }
     }
 
@@ -215,41 +340,25 @@ async fn stream_response(
                     first_sentence_at = Some(std::time::Instant::now());
                     first_sentence_text = Some(trimmed.to_string());
                 }
-                match play_sentence(
-                    trimmed,
-                    tts.as_ref(),
-                    &output,
-                    &mut first_audio_sent_at,
-                    &audio_playing,
-                    &answer_started,
-                )
-                .await
-                {
-                    Ok(ttfb) => {
-                        if first_tts_ttfb_ms.is_none() {
-                            first_tts_ttfb_ms = Some(ttfb);
-                        }
-                    }
-                    Err(err) => {
-                        tracing::warn!(error = %err, sentence = %trimmed, "TTS synthesis failed for flushed sentence, continuing turn");
-                    }
-                }
+                spoken_tx
+                    .send(Spoken::Sentence(trimmed.to_string()))
+                    .await
+                    .map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
             }
         }
     }
 
-    if first_audio_sent_at.is_some() || filler_audio_at.is_some() {
-        output
-            .send(CallCommand::Mark(format!("response-{number}")))
-            .await
-            .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+    drop(spoken_tx);
+    if let Ok((played_ttfb, played_audio, _)) = player.await {
+        first_tts_ttfb_ms = played_ttfb;
+        first_audio_sent_at = played_audio;
     }
 
     let all_audio_sent_at = std::time::Instant::now();
 
     log_turn_latency(
         number,
-        context,
+        &mut_context,
         transcript,
         &full_response,
         first_sentence_text.as_deref(),
@@ -263,9 +372,10 @@ async fn stream_response(
         all_audio_sent_at,
     );
 
-    Ok(())
+    Ok(full_response)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn play_sentence(
     sentence: &str,
     tts: &dyn TtsProvider,
@@ -273,6 +383,8 @@ async fn play_sentence(
     first_audio_tracker: &mut Option<std::time::Instant>,
     audio_playing: &std::sync::atomic::AtomicBool,
     answer_started: &std::sync::atomic::AtomicBool,
+    playback: &PlaybackState,
+    generation: u64,
 ) -> Result<u128, VoiceError> {
     let text = sentence.trim();
     if text.is_empty() || !text.chars().any(|c| c.is_alphabetic()) {
@@ -287,9 +399,12 @@ async fn play_sentence(
         .await
         .map_err(|_| VoiceError::Timeout("TTS audio"))?
     {
+        if !playback.accepts(generation) {
+            break;
+        }
         let chunk_bytes = chunk?;
         output
-            .send(CallCommand::Media(chunk_bytes))
+            .send(CallCommand::Media { bytes: chunk_bytes, generation })
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
 

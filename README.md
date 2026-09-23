@@ -40,13 +40,10 @@ To use Sarvam for text-to-speech:
 ```dotenv
 VOX_TTS_PROVIDER=sarvam
 SARVAM_API_KEY=your-sarvam-api-key
-SARVAM_TTS_MODEL=bulbul:v3
-SARVAM_LANGUAGE_CODE=en-IN
-SARVAM_SPEAKER=shubh
-SARVAM_TTS_PACE=1.0
 ```
 
-Provider, model, language, and speaker choices are represented independently.
+Sarvam model, speaker, language, and pace are fixed in code (`bulbul:v3`, `shubh`, `en-IN`, `1.0`).
+Provider choices are represented independently.
 The current build registers implementations for each stage and rejects
 unsupported provider names during startup.
 

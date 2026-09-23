@@ -1,5 +1,6 @@
-// this file code contains twilio call status callback handler
-
+/**
+* this file code contains twilio call status callback handler
+*/
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -61,7 +62,10 @@ pub async fn handle_voice_status(
 
     if let Some(status) = params.call_status {
         tracing::info!(call_sid = %params.call_sid, %status, "Twilio call status update");
-        if matches!(status.as_str(), "completed" | "failed" | "busy" | "no-answer" | "canceled") {
+        if matches!(
+            status.as_str(),
+            "completed" | "failed" | "busy" | "no-answer" | "canceled"
+        ) {
             app_state.twilio.remove(&params.call_sid);
         }
     }

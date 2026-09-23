@@ -1,5 +1,6 @@
-// this file code contains bridge application entry point
-
+/**
+* this file code contains bridge application entry point
+*/
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -20,21 +21,13 @@ async fn main() {
 
     let (tx, _rx) = broadcast::channel(100);
     let twilio_state = Arc::new(DashMap::new());
-    let voice_config =
-        VoiceConfig::from_env().expect("voice provider configuration is invalid");
+    let voice_config = VoiceConfig::from_env().expect("voice provider configuration is invalid");
     let core_url = voice_config.secrets.core_url.clone();
-    let host_credential_id = voice_config.secrets.core_host_credential_id.clone();
-    let host_audience = voice_config.secrets.core_host_audience.clone();
-    let host_secret = voice_config.secrets.core_host_secret.clone();
+    let auth_token = voice_config.secrets.core_auth_token.clone();
 
     let core_client = Arc::new(
-        CoreClient::new(
-            core_url.clone(),
-            host_credential_id,
-            host_audience,
-            host_secret,
-        )
-        .expect("core client initialization failed"),
+        CoreClient::new(core_url.clone(), auth_token.clone())
+            .expect("core client initialization failed"),
     );
 
     let voice = Arc::new(
@@ -67,11 +60,13 @@ async fn main() {
             None
         };
 
-    let service_token = std::env::var("VOX_BRIDGE_SERVICE_TOKEN").unwrap_or_default();
+    let service_token = auth_token;
     let whatsapp_verify_token = std::env::var("WA_VERIFY_KEY").ok();
     let whatsapp_app_secret = std::env::var("META_APP_SECRET").ok();
     let whatsapp_access_token = std::env::var("WHATSAPP_ACCESS_KEY").ok();
     let whatsapp_phone_id = std::env::var("WHATSAPP_PHONE_ID").ok();
+    let desktop_sessions = Arc::new(DashMap::new());
+    let desktop_auth_token = std::env::var("DESKTOP_AUTH_TOKEN").ok();
 
     let app_state = Arc::new(AppState {
         tx,
@@ -88,6 +83,8 @@ async fn main() {
         whatsapp_app_secret,
         whatsapp_access_token,
         whatsapp_phone_id,
+        desktop_sessions,
+        desktop_auth_token,
     });
 
     let port = std::env::var("PORT")
@@ -110,14 +107,10 @@ async fn main() {
     });
 
     if let Err(e) = app::run_server(app_state, port).await {
-        eprintln!("server error: {e}");
+        tracing::error!(error = %e, "Server failed to start");
     }
 }
 
 fn install_crypto_provider() {
-    if rustls::crypto::CryptoProvider::get_default().is_none() {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .expect("failed to install the Rustls crypto provider");
-    }
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }

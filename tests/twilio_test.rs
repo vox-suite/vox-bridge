@@ -1,5 +1,6 @@
-// this file code contains tests for twilio protocol serialization and signature
-
+/**
+* this file code contains tests for twilio protocol serialization and signature
+*/
 use vox_bridge::channels::twilio::protocol::{
     InboundStreamMessage, OutboundClearMessage, OutboundMark, OutboundMarkMessage,
     OutboundMediaMessage, OutboundPayload,
@@ -63,10 +64,7 @@ fn validates_twilio_hmac_sha1_signature() {
     assert!(!signature.is_empty());
 
     assert!(validate_twilio_signature(
-        auth_token,
-        url,
-        &params,
-        &signature
+        auth_token, url, &params, &signature
     ));
     assert!(!validate_twilio_signature(
         auth_token,

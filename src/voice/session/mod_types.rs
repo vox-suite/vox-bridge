@@ -1,5 +1,6 @@
-// this file code contains voice session command event and signal definitions
-
+/**
+* this file code contains voice session command event and signal definitions
+*/
 use bytes::Bytes;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -9,14 +10,17 @@ pub enum CallEvent {
     Stop,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum CallCommand {
-    Media(Bytes),
-    Mark(String),
+    Media { bytes: Bytes, generation: u64 },
+    Mark { name: String, generation: u64 },
     Clear,
 }
 
 #[derive(Debug)]
 pub enum SessionSignal {
-    ResponseFinished(u64),
+    ResponseFinished {
+        number: u64,
+        response_text: String,
+    },
 }

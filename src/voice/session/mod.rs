@@ -1,5 +1,6 @@
-// this file code contains voice session orchestrator and event loop
-
+/**
+* this file code contains voice session orchestrator and event loop
+*/
 pub mod mod_types;
 pub mod playback;
 pub mod response;
@@ -15,28 +16,42 @@ use tokio::task::JoinHandle;
 
 use crate::channels::context::CallContext;
 use crate::providers::stt::SttEvent;
-use crate::voice::filler::prewarm_fillers;
 use crate::voice::metrics::TurnTiming;
 use crate::voice::provider::{VoiceError, VoiceProviders};
 use crate::voice::session::response::spawn_response;
 use crate::voice::session::speculation::spawn_speculation_watcher;
-use crate::voice::turn::DraftTurn;
+use crate::voice::turn::{DraftTurn, is_backchannel};
 
 pub async fn run_voice_session(
+    providers: VoiceProviders,
+    context: CallContext,
+    input: mpsc::Receiver<CallEvent>,
+    output: mpsc::Sender<CallCommand>,
+) -> Result<(), VoiceError> {
+    run_voice_session_with_playback(
+        providers,
+        context,
+        input,
+        output,
+        Arc::new(PlaybackState::new()),
+    )
+    .await
+}
+
+pub async fn run_voice_session_with_playback(
     providers: VoiceProviders,
     mut context: CallContext,
     mut input: mpsc::Receiver<CallEvent>,
     output: mpsc::Sender<CallCommand>,
+    playback: Arc<PlaybackState>,
 ) -> Result<(), VoiceError> {
-    prewarm_fillers(providers.tts.clone());
-    let stt = providers.stt.connect().await?;
+    let stt_connect = providers.stt.connect();
 
     let (signal_tx, mut signal_rx) = mpsc::channel(64);
     let (speculation_tx, speculation_rx) = watch::channel(None);
     let _speculation_watcher =
         spawn_speculation_watcher(speculation_rx, providers.agent.clone());
 
-    let playback = Arc::new(PlaybackState::new());
     let audio_playing = Arc::new(AtomicBool::new(false));
     let answer_started = Arc::new(AtomicBool::new(false));
 
@@ -49,6 +64,8 @@ pub async fn run_voice_session(
 
     let mut speech_started_at: Option<std::time::Instant> = None;
     let mut last_audio_at: Option<std::time::Instant> = None;
+    let mut completeness_rx: Option<mpsc::Receiver<f64>> = None;
+    let mut settle_origin: Option<tokio::time::Instant> = None;
 
     if let Some(instruction) = context.initiation_context.clone() {
         response_number += 1;
@@ -68,12 +85,17 @@ pub async fn run_voice_session(
             Some(timing),
             providers.agent.clone(),
             providers.tts.clone(),
+            providers.filler_tts.clone(),
+            providers.jev.clone(),
             output.clone(),
             signal_tx.clone(),
             audio_playing.clone(),
             answer_started.clone(),
+            playback.clone(),
         ));
     }
+
+    let stt = stt_connect.await?;
 
     loop {
         tokio::select! {
@@ -107,31 +129,40 @@ pub async fn run_voice_session(
                     Ok(Some(SttEvent::SpeechStarted)) => {
                         speech_started_at.get_or_insert_with(std::time::Instant::now);
                         settle_at = None;
-                        let is_playing = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
-                        if is_playing || active_response.is_some() {
-                            playback.invalidate();
-                            if let Some(task) = active_response.take() {
-                                task.abort();
-                                let _ = task.await;
-                                if !answer_started.load(std::sync::atomic::Ordering::SeqCst)
-                                    && draft.text.is_empty()
-                                    && let Some((previous, timing)) = dispatched.take()
-                                {
-                                    draft = previous;
-                                    draft_timing = Some(timing);
-                                }
-                            }
-                            if answer_started.load(std::sync::atomic::Ordering::SeqCst) {
-                                dispatched = None;
-                            }
-                            output
-                                .send(CallCommand::Clear)
-                                .await
-                                .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
-                            tracing::info!(turn = response_number, playing = is_playing, "VOICE_TURN_INTERRUPTED");
-                        }
                     }
                     Ok(Some(SttEvent::PartialTranscript(text))) => {
+                        let assistant_active = audio_playing.load(std::sync::atomic::Ordering::SeqCst)
+                            || active_response.is_some();
+                        if assistant_active {
+                            let is_ack = is_backchannel(&text);
+
+                            if is_ack {
+                                tracing::info!(text = %text, "VOICE_BACKCHANNEL_IGNORED");
+                            } else {
+                                let is_playing = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
+                                playback.invalidate();
+                                if let Some(task) = active_response.take() {
+                                    task.abort();
+                                    let _ = task.await;
+                                    if !answer_started.load(std::sync::atomic::Ordering::SeqCst)
+                                        && draft.text.is_empty()
+                                        && let Some((previous, timing)) = dispatched.take()
+                                    {
+                                        draft = previous;
+                                        draft_timing = Some(timing);
+                                    }
+                                }
+                                if answer_started.load(std::sync::atomic::Ordering::SeqCst) {
+                                    dispatched = None;
+                                }
+                                output
+                                    .send(CallCommand::Clear)
+                                    .await
+                                    .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+                                tracing::info!(turn = response_number, playing = is_playing, "VOICE_TURN_INTERRUPTED");
+                            }
+                        }
+
                         if draft.partial(&text) && draft.snapshot().split_whitespace().count() >= 3 {
                             let mut ctx = context.clone();
                             ctx.turn_id = Some(draft.id.clone());
@@ -144,6 +175,30 @@ pub async fn run_voice_session(
                         if text.trim().is_empty() {
                             continue;
                         }
+
+                        let assistant_active = audio_playing.load(std::sync::atomic::Ordering::SeqCst)
+                            || active_response.is_some();
+                        if assistant_active && is_backchannel(&text) {
+                            tracing::info!(text = %text, "VOICE_BACKCHANNEL_IGNORED");
+                            speech_started_at = None;
+                            continue;
+                        }
+
+                        if assistant_active {
+                            let is_playing = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
+                            playback.invalidate();
+                            if let Some(task) = active_response.take() {
+                                task.abort();
+                                let _ = task.await;
+                            }
+                            dispatched = None;
+                            output
+                                .send(CallCommand::Clear)
+                                .await
+                                .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
+                            tracing::info!(turn = response_number, playing = is_playing, "VOICE_TURN_INTERRUPTED");
+                        }
+
                         let now = std::time::Instant::now();
                         let timing = draft_timing.get_or_insert(TurnTiming {
                             speech_started_at: speech_started_at.take(),
@@ -151,41 +206,45 @@ pub async fn run_voice_session(
                             transcript_received_at: now,
                         });
                         timing.last_audio_at = last_audio_at;
-                        if let Some(task) = active_response.take() {
-                            task.abort();
-                            let _ = task.await;
-                            if !answer_started.load(std::sync::atomic::Ordering::SeqCst)
-                                && draft.text.is_empty()
-                                && let Some((previous, previous_timing)) = dispatched.take()
-                            {
-                                draft = previous;
-                                draft_timing = Some(TurnTiming {
-                                    last_audio_at,
-                                    ..previous_timing
-                                });
-                            }
-                        }
-                        if audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                            playback.invalidate();
-                            output
-                                .send(CallCommand::Clear)
-                                .await
-                                .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
-                            dispatched = None;
-                        }
+
                         draft.finish(&text);
-                        settle_at = Some(tokio::time::Instant::now() + draft.settle_delay());
+                        let origin = tokio::time::Instant::now();
+                        settle_origin = Some(origin);
+                        settle_at = Some(origin + draft.settle_delay());
+                        if let Some(jev) = &providers.jev {
+                            let utterance = text.clone();
+                            let jev = jev.clone();
+                            let (tx, rx) = mpsc::channel(1);
+                            tokio::spawn(async move {
+                                if let Ok(score) = jev.is_complete_thought(&utterance).await {
+                                    let _ = tx.send(score).await;
+                                }
+                            });
+                            completeness_rx = Some(rx);
+                        }
                         let mut ctx = context.clone();
                         ctx.turn_id = Some(draft.id.clone());
                         ctx.revision = Some(draft.revision);
-                        if draft.snapshot().split_whitespace().count() >= 3 {
-                            let _ = speculation_tx.send(Some((ctx, draft.snapshot())));
-                        }
+                        let _ = speculation_tx.send(Some((ctx, draft.snapshot())));
                     }
                     Ok(None) => {}
                     Err(err) => {
                         tracing::warn!(error = %err, "STT stream error");
                     }
+                }
+            }
+            Some(score) = async {
+                match &mut completeness_rx {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                completeness_rx = None;
+                if let Some(origin) = settle_origin {
+                    let adjusted = draft.settle_delay_for_completeness(Some(score));
+                    let target = origin + adjusted;
+                    let now = tokio::time::Instant::now();
+                    settle_at = Some(if target > now { target } else { now });
                 }
             }
             _ = async {
@@ -195,6 +254,8 @@ pub async fn run_voice_session(
                 }
             } => {
                 settle_at = None;
+                settle_origin = None;
+                completeness_rx = None;
                 if draft.text.is_empty() {
                     continue;
                 }
@@ -206,7 +267,11 @@ pub async fn run_voice_session(
                 });
                 context.turn_id = Some(turn.id.clone());
                 context.revision = Some(turn.revision);
-                context.voice_signature = None;
+                if let Some(task) = active_response.take() {
+                    task.abort();
+                    let _ = task.await;
+                }
+
                 response_number += 1;
                 playback.begin();
                 answer_started.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -218,23 +283,26 @@ pub async fn run_voice_session(
                     Some(timing),
                     providers.agent.clone(),
                     providers.tts.clone(),
+                    providers.filler_tts.clone(),
+                    providers.jev.clone(),
                     output.clone(),
                     signal_tx.clone(),
                     audio_playing.clone(),
                     answer_started.clone(),
+                    playback.clone(),
                 ));
             }
             signal = signal_rx.recv() => {
                 match signal {
-                    Some(SessionSignal::ResponseFinished(number)) => {
-                        if number == response_number {
-                            active_response.take();
-                            if !audio_playing.load(std::sync::atomic::Ordering::SeqCst) {
-                                dispatched = None;
-                            }
+                    Some(SessionSignal::ResponseFinished { number, .. })
+                        if number == response_number =>
+                    {
+                        active_response.take();
+                        if !audio_playing.load(std::sync::atomic::Ordering::SeqCst) {
+                            dispatched = None;
                         }
                     }
-                    None => break,
+                    Some(_) | None => {}
                 }
             }
         }
@@ -242,7 +310,8 @@ pub async fn run_voice_session(
 
     if let Some(task) = active_response.take() {
         task.abort();
+        let _ = task.await;
     }
-    let _ = stt.finish().await;
+
     Ok(())
 }

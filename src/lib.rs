@@ -1,5 +1,6 @@
-// this file code contains bridge library modules and core initialization
-
+/**
+* this file code contains bridge library modules and core initialization
+*/
 pub mod app;
 pub mod channels;
 pub mod config;

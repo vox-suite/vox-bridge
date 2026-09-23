@@ -1,5 +1,6 @@
-// this file code contains mp3 decoding and mulaw transcoding
-
+/**
+* this file code contains mp3 decoding and mulaw transcoding
+*/
 use bytes::Bytes;
 use futures_util::stream::{Stream, StreamExt};
 use std::pin::Pin;
@@ -162,9 +163,7 @@ where
                 Err(minimp3::Error::Eof) => break,
                 Err(minimp3::Error::SkippedData) => continue,
                 Err(minimp3::Error::InsufficientData) => continue,
-                Err(minimp3::Error::Io(err))
-                    if err.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
+                Err(minimp3::Error::Io(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
                     break;
                 }
                 Err(err) => {

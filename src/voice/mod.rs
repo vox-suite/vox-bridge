@@ -1,5 +1,6 @@
-// this file code contains voice pipeline modules and runtime exports
-
+/**
+* this file code contains voice pipeline modules and runtime exports
+*/
 pub mod audio;
 pub mod chunker;
 pub mod config;
@@ -22,5 +23,5 @@ pub use provider::{
 pub use registry::{
     ProviderRegistry, ProviderSet, StaticVoiceProfileResolver, VoiceProfileResolver, VoiceRuntime,
 };
-pub use session::{CallCommand, CallEvent, PlaybackState, run_voice_session};
+pub use session::{CallCommand, CallEvent, PlaybackState, run_voice_session, run_voice_session_with_playback};
 pub use turn::DraftTurn;

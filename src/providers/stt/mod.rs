@@ -1,5 +1,6 @@
-// this file code contains speech to text provider traits and event types
-
+/**
+* this file code contains speech to text provider traits and event types
+*/
 pub mod assemblyai;
 
 use async_trait::async_trait;

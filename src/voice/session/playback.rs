@@ -1,5 +1,6 @@
-// this file code contains voice playback state and generation tracking
-
+/**
+* this file code contains voice playback state and generation tracking
+*/
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 #[derive(Debug, Default)]

@@ -1,5 +1,6 @@
-// this file code contains voice configuration and profile definitions
-
+/**
+* this file code contains voice configuration and profile definitions
+*/
 use crate::voice::provider::VoiceError;
 use std::collections::HashMap;
 
@@ -29,11 +30,11 @@ pub struct VoiceProfile {
 pub struct VoiceSecrets {
     pub assemblyai_api_key: String,
     pub core_url: String,
-    pub core_host_credential_id: String,
-    pub core_host_audience: String,
-    pub core_host_secret: String,
+    pub core_auth_token: String,
     pub sarvam_api_key: Option<String>,
     pub elevenlabs_api_key: Option<String>,
+    pub elevenlabs_filler_voice_id: Option<String>,
+    pub typesafe_api_key: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -47,19 +48,17 @@ impl VoiceConfig {
         let values: HashMap<String, String> = [
             "VOX_STT_PROVIDER",
             "VOX_TTS_PROVIDER",
+            "VOX_CORE_URL",
             "ASSEMBLYAI_API_KEY",
             "ASSEMBLYAI_SPEECH_MODEL",
-            "VOX_CORE_HOST_CREDENTIAL_ID",
-            "VOX_CORE_HOST_AUDIENCE",
-            "VOX_CORE_HOST_SECRET",
+            "VOX_AUTH_TOKEN",
             "SARVAM_API_KEY",
-            "SARVAM_TTS_MODEL",
-            "SARVAM_LANGUAGE_CODE",
-            "SARVAM_SPEAKER",
-            "SARVAM_TTS_PACE",
             "ELEVENLABS_API_KEY",
             "ELEVENLABS_MODEL_ID",
             "ELEVENLABS_VOICE_ID",
+            "ELEVENLABS_FILLER_VOICE_ID",
+            "TYPESAFE_API_KEY",
+            "JEV_API_KEY",
         ]
         .into_iter()
         .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
@@ -80,36 +79,22 @@ impl VoiceConfig {
         let core_url = get("VOX_CORE_URL")
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(default_core_url);
-        let core_host_credential_id = required(&get, "VOX_CORE_HOST_CREDENTIAL_ID")?;
-        let core_host_audience = required(&get, "VOX_CORE_HOST_AUDIENCE")?;
-        let core_host_secret = required(&get, "VOX_CORE_HOST_SECRET")?;
+        let core_auth_token = required(&get, "VOX_AUTH_TOKEN")?;
+        let typesafe_api_key = get("TYPESAFE_API_KEY")
+            .or_else(|| get("JEV_API_KEY"))
+            .filter(|v| !v.trim().is_empty());
+        let elevenlabs_filler_voice_id =
+            get("ELEVENLABS_FILLER_VOICE_ID").filter(|v| !v.trim().is_empty());
 
         let (tts_model, speaker, pace, language_code, sarvam_api_key, elevenlabs_api_key) =
             match tts_provider.as_str() {
                 "sarvam" => {
                     let sarvam_api_key = required(&get, "SARVAM_API_KEY")?;
-                    let tts_model = value_or(&get, "SARVAM_TTS_MODEL", "bulbul:v3");
-                    let default_speaker = match tts_model.as_str() {
-                        "bulbul:v3" => "shubh",
-                        "bulbul:v2" => "anushka",
-                        model => {
-                            return Err(VoiceError::Configuration(format!(
-                                "unsupported Sarvam model {model}"
-                            )));
-                        }
-                    };
-                    let speaker = value_or(&get, "SARVAM_SPEAKER", default_speaker);
-                    let pace = value_or(&get, "SARVAM_TTS_PACE", "1.0")
-                        .parse::<f64>()
-                        .map_err(|_| {
-                            VoiceError::Configuration("SARVAM_TTS_PACE must be a number".into())
-                        })?;
-                    validate_sarvam(&tts_model, &speaker, pace)?;
                     (
-                        tts_model,
-                        speaker,
-                        pace,
-                        value_or(&get, "SARVAM_LANGUAGE_CODE", "en-IN"),
+                        SARVAM_TTS_MODEL.to_string(),
+                        SARVAM_SPEAKER.to_string(),
+                        SARVAM_TTS_PACE,
+                        SARVAM_LANGUAGE_CODE.to_string(),
                         Some(sarvam_api_key),
                         get("ELEVENLABS_API_KEY").filter(|v| !v.trim().is_empty()),
                     )
@@ -159,11 +144,11 @@ impl VoiceConfig {
             secrets: VoiceSecrets {
                 assemblyai_api_key,
                 core_url,
-                core_host_credential_id,
-                core_host_audience,
-                core_host_secret,
+                core_auth_token,
                 sarvam_api_key,
                 elevenlabs_api_key,
+                elevenlabs_filler_voice_id,
+                typesafe_api_key,
             },
         })
     }
@@ -173,52 +158,33 @@ fn value_or<F>(get: &F, key: &str, default: &str) -> String
 where
     F: Fn(&str) -> Option<String>,
 {
-    get(key)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| default.to_owned())
+    get(key).unwrap_or_else(|| default.to_string())
 }
 
-fn required<F>(get: &F, key: &str) -> Result<String, VoiceError>
+fn required<F>(get: &F, key: &'static str) -> Result<String, VoiceError>
 where
     F: Fn(&str) -> Option<String>,
 {
     get(key)
-        .filter(|value| !value.trim().is_empty())
+        .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| VoiceError::Configuration(format!("{key} is missing")))
 }
 
-fn default_core_url() -> String {
-    use std::net::ToSocketAddrs;
-    if ("core-api", 3001).to_socket_addrs().is_ok() {
-        "http://core-api:3001".to_string()
-    } else {
-        "http://127.0.0.1:3001".to_string()
-    }
-}
-
-fn require_provider(kind: &str, actual: &str, supported: &[&str]) -> Result<(), VoiceError> {
-    if supported.contains(&actual) {
+fn require_provider(kind: &str, provider: &str, supported: &[&str]) -> Result<(), VoiceError> {
+    if supported.contains(&provider) {
         Ok(())
     } else {
         Err(VoiceError::Configuration(format!(
-            "unsupported {kind} provider {actual}"
+            "unsupported {kind} provider {provider}"
         )))
     }
 }
 
-fn validate_sarvam(model: &str, speaker: &str, pace: f64) -> Result<(), VoiceError> {
-    if speaker.trim().is_empty() {
-        return Err(VoiceError::Configuration("speaker cannot be empty".into()));
-    }
-    let range = match model {
-        "bulbul:v3" => 0.5..=2.0,
-        "bulbul:v2" => 0.3..=3.0,
-        _ => unreachable!(),
-    };
-    if !range.contains(&pace) {
-        return Err(VoiceError::Configuration(format!(
-            "pace {pace} is incompatible with {model}"
-        )));
-    }
-    Ok(())
+fn default_core_url() -> String {
+    "http://127.0.0.1:3001".to_string()
 }
+
+const SARVAM_TTS_MODEL: &str = "bulbul:v3";
+const SARVAM_SPEAKER: &str = "shubh";
+const SARVAM_LANGUAGE_CODE: &str = "en-IN";
+const SARVAM_TTS_PACE: f64 = 1.0;

@@ -1,5 +1,6 @@
-// this file code contains call and conversation channel context structures
-
+/**
+* this file code contains call and conversation channel context structures
+*/
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelIdentity {
     pub channel: String,
@@ -14,8 +15,8 @@ pub struct CallContext {
     pub initiation_context: Option<String>,
     pub turn_id: Option<String>,
     pub revision: Option<u64>,
-    pub voice_signature: Option<String>,
     pub tts_provider: Option<String>,
+    pub filler: Option<String>,
 }
 
 pub fn normalized_e164(value: &str) -> Option<String> {

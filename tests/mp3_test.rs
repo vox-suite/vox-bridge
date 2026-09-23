@@ -1,5 +1,6 @@
-// this file code contains tests for audio transcoding and mulaw encoding
-
+/**
+* this file code contains tests for audio transcoding and mulaw encoding
+*/
 use vox_bridge::voice::audio::mp3::{linear_to_mulaw, mulaw_to_linear};
 
 #[test]
