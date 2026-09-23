@@ -12,6 +12,7 @@ use axum::{
 };
 use std::sync::Arc;
 
+use crate::auth_bridge::auth_bridge_handler;
 use crate::channels::desktop::{create_desktop_session, desktop_stream_handler};
 use crate::channels::outbound::handle_outbound_call;
 use crate::channels::twilio::{handle_voice_status, initialize_voice_socket, voice_stream_handler};
@@ -22,6 +23,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index_handler))
         .route("/health", get(health_handler))
+        .route("/auth/bridge", get(auth_bridge_handler))
         .route("/ws", get(ws_socket_upgrade))
         .route("/bridge/wa", get(wa_verify).post(wa_receive))
         .route("/bridge/twilio/voice", post(initialize_voice_socket))

@@ -2,6 +2,7 @@
 * this file code contains bridge library modules and core initialization
 */
 pub mod app;
+pub mod auth_bridge;
 pub mod channels;
 pub mod config;
 pub mod core;
