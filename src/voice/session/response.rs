@@ -68,6 +68,10 @@ pub fn spawn_response(
             started: std::time::Instant::now(),
             outcome: "cancelled",
         };
+        let apology_tts = tts.clone();
+        let apology_output = output.clone();
+        let apology_answer_started = answer_started.clone();
+        let apology_playback = playback.clone();
         let result = stream_response(
             number,
             &context,
@@ -90,8 +94,17 @@ pub fn spawn_response(
             }
             Err(error) => {
                 lifecycle.outcome = "failed";
-                audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
                 tracing::warn!(provider_error = %error, "voice response failed");
+                speak_apology(
+                    number,
+                    error,
+                    &apology_tts,
+                    &apology_output,
+                    &audio_playing,
+                    &apology_answer_started,
+                    &apology_playback,
+                )
+                .await;
                 String::new()
             }
         };
@@ -379,6 +392,52 @@ async fn stream_response(
     );
 
     Ok(full_response)
+}
+
+/// Speaks a short apology when a turn fails outright, so the caller never gets dead air.
+/// Reuses `play_sentence`'s TTS/output/mark plumbing rather than a bespoke path.
+#[allow(clippy::too_many_arguments)]
+async fn speak_apology(
+    number: u64,
+    error: &VoiceError,
+    tts: &Arc<dyn TtsProvider>,
+    output: &mpsc::Sender<CallCommand>,
+    audio_playing: &Arc<std::sync::atomic::AtomicBool>,
+    answer_started: &Arc<std::sync::atomic::AtomicBool>,
+    playback: &Arc<PlaybackState>,
+) {
+    let generation = playback.current_generation();
+    if !playback.accepts(generation) {
+        audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
+        return;
+    }
+    let apology = match error {
+        VoiceError::Timeout(_) => "Sorry, that's taking longer than expected. Could you say that again?",
+        _ => "Sorry, I ran into a problem with that. Could you try again?",
+    };
+    let mut first_audio_tracker = None;
+    let played = play_sentence(
+        apology,
+        tts.as_ref(),
+        output,
+        &mut first_audio_tracker,
+        audio_playing,
+        answer_started,
+        playback,
+        generation,
+    )
+    .await
+    .is_ok();
+    if !played {
+        audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
+        return;
+    }
+    let _ = output
+        .send(CallCommand::Mark {
+            name: format!("response-{number}"),
+            generation,
+        })
+        .await;
 }
 
 #[allow(clippy::too_many_arguments)]
