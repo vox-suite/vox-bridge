@@ -122,7 +122,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
     tracing::info!(%stream_sid, %call_sid, "Twilio stream started");
     let profile = state.voice.resolver.resolve();
     let context = CallContext {
-        channel: "twilio".into(),
+        channel: "phone".into(),
         external_identity: accepted_call.from,
         external_conversation_id: accepted_call.external_conversation_id.clone(),
         initiation_context: accepted_call.opening_instruction.clone(),
