@@ -61,6 +61,7 @@ pub struct CoreClient {
 impl CoreClient {
     pub fn new(base_url: String, auth_token: String) -> Result<Self, VoiceError> {
         let client = reqwest::Client::builder()
+            .no_proxy()
             .timeout(Duration::from_secs(30))
             .tcp_nodelay(true)
             .tcp_keepalive(Duration::from_secs(30))
