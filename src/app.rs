@@ -13,6 +13,7 @@ use axum::{
 use std::sync::Arc;
 
 use crate::channels::desktop::{create_desktop_session, desktop_stream_handler};
+use crate::channels::notifications::{handle_notification_dispatch, handle_opt_in, handle_opt_out};
 use crate::channels::outbound::handle_outbound_call;
 use crate::channels::twilio::{handle_voice_status, initialize_voice_socket, voice_stream_handler};
 use crate::channels::whatsapp::{wa_receive, wa_verify};
@@ -37,6 +38,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(handle_outbound_call),
         )
         .route("/channels/outbound-call", post(handle_outbound_call))
+        .route(
+            "/internal/v1/notifications/dispatch",
+            post(handle_notification_dispatch),
+        )
+        .route(
+            "/channels/notifications/dispatch",
+            post(handle_notification_dispatch),
+        )
+        .route("/internal/v1/notifications/opt-out", post(handle_opt_out))
+        .route("/internal/v1/notifications/opt-in", post(handle_opt_in))
         .with_state(state)
 }
 

@@ -55,6 +55,9 @@ fn create_test_state() -> Arc<AppState> {
         whatsapp_phone_id: None,
         desktop_sessions: Arc::new(DashMap::new()),
         desktop_auth_token: Some("desktop-secret-token".into()),
+        opt_outs: Arc::new(DashMap::new()),
+        notification_deliveries: Arc::new(DashMap::new()),
+        messaging_client: None,
     })
 }
 

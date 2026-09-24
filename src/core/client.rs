@@ -448,6 +448,54 @@ impl CoreClient {
                 message: format!("Invalid approve response: {err}"),
             })
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn report_reminder_delivery(
+        &self,
+        host_user_id: &str,
+        reminder_id: Uuid,
+        status: &str,
+        channel: &str,
+        destination: &str,
+        provider_receipt_id: Option<&str>,
+        failure_reason: Option<&str>,
+    ) -> Result<(), VoiceError> {
+        let endpoint = format!(
+            "{}/v1/reminders/{reminder_id}/delivery-callback",
+            self.base_url
+        );
+        let body = serde_json::json!({
+            "host_context": HostContextRequest {
+                host_user_id: host_user_id.to_string(),
+                organization_external_key: None,
+            },
+            "status": status,
+            "channel": channel,
+            "destination": destination,
+            "provider_receipt_id": provider_receipt_id,
+            "failure_reason": failure_reason,
+        });
+
+        let request = self
+            .prepare_request(self.client.post(&endpoint), host_user_id, None)?
+            .json(&body);
+
+        let response = request.send().await.map_err(|err| VoiceError::Provider {
+            provider: "core",
+            message: format!("Failed to report reminder delivery: {err}"),
+        })?;
+
+        if !response.status().is_success() {
+            let s = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(VoiceError::Provider {
+                provider: "core",
+                message: format!("Report reminder delivery failed ({s}): {body_text}"),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]

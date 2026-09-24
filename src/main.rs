@@ -67,6 +67,8 @@ async fn main() {
     let whatsapp_phone_id = std::env::var("WHATSAPP_PHONE_ID").ok();
     let desktop_sessions = Arc::new(DashMap::new());
     let desktop_auth_token = std::env::var("DESKTOP_AUTH_TOKEN").ok();
+    let opt_outs = Arc::new(DashMap::new());
+    let notification_deliveries = Arc::new(DashMap::new());
 
     let app_state = Arc::new(AppState {
         tx,
@@ -85,6 +87,9 @@ async fn main() {
         whatsapp_phone_id,
         desktop_sessions,
         desktop_auth_token,
+        opt_outs,
+        notification_deliveries,
+        messaging_client: None,
     });
 
     let port = std::env::var("PORT")

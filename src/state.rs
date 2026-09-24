@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::channels::desktop::DesktopSessionState;
+use crate::channels::notifications::{MessagingClient, NotificationDeliveryRecord, OptOutRecord};
 use crate::channels::twilio::webhook::TwilioState;
 use crate::core::client::CoreClient;
 use crate::providers::telephony::TelephonyClient;
@@ -29,4 +30,7 @@ pub struct AppState {
     pub whatsapp_phone_id: Option<String>,
     pub desktop_sessions: Arc<DashMap<String, DesktopSessionState>>,
     pub desktop_auth_token: Option<String>,
+    pub opt_outs: Arc<DashMap<String, OptOutRecord>>,
+    pub notification_deliveries: Arc<DashMap<String, NotificationDeliveryRecord>>,
+    pub messaging_client: Option<Arc<dyn MessagingClient>>,
 }
