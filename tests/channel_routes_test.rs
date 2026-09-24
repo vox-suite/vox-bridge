@@ -5,7 +5,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 use tower::util::ServiceExt;
 
 use vox_bridge::app::build_router;
@@ -16,7 +15,6 @@ use vox_bridge::voice::registry::VoiceRuntime;
 
 #[tokio::test]
 async fn health_check_returns_ok() {
-    let (tx, _rx) = broadcast::channel(16);
     let twilio = Arc::new(DashMap::new());
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("key".into()),
@@ -32,7 +30,6 @@ async fn health_check_returns_ok() {
         Arc::new(CoreClient::new("http://127.0.0.1:3001".into(), "svc-token".into()).unwrap());
 
     let state = Arc::new(AppState {
-        tx,
         twilio,
         twilio_account_sid: Arc::new("AC123".into()),
         twilio_auth_token: Arc::new("secret".into()),
@@ -47,7 +44,6 @@ async fn health_check_returns_ok() {
         whatsapp_access_token: None,
         whatsapp_phone_id: None,
         desktop_sessions: Arc::new(DashMap::new()),
-        desktop_auth_token: None,
         opt_outs: Arc::new(DashMap::new()),
         notification_deliveries: Arc::new(DashMap::new()),
         messaging_client: None,

@@ -20,7 +20,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use tokio::sync::broadcast;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -154,7 +153,6 @@ fn create_test_state(
     messaging: Option<Arc<dyn MessagingClient>>,
     core_url: Option<String>,
 ) -> Arc<AppState> {
-    let (tx, _) = broadcast::channel(16);
     let url = core_url.unwrap_or_else(|| "http://127.0.0.1:3001".into());
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("test-assembly-key".into()),
@@ -168,7 +166,6 @@ fn create_test_state(
     let core_client = Arc::new(CoreClient::new(url.clone(), "test-token".into()).unwrap());
 
     Arc::new(AppState {
-        tx,
         twilio: Arc::new(DashMap::new()),
         twilio_account_sid: Arc::new("ACtest123".into()),
         twilio_auth_token: Arc::new("authtest123".into()),
@@ -183,7 +180,6 @@ fn create_test_state(
         whatsapp_access_token: Some("wa_token".into()),
         whatsapp_phone_id: Some("12345678".into()),
         desktop_sessions: Arc::new(DashMap::new()),
-        desktop_auth_token: None,
         opt_outs: Arc::new(DashMap::new()),
         notification_deliveries: Arc::new(DashMap::new()),
         messaging_client: messaging,

@@ -6,7 +6,6 @@ use axum::http::{Request, StatusCode};
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast;
 use tower::util::ServiceExt;
 
 use vox_bridge::app::build_router;
@@ -22,7 +21,32 @@ use vox_bridge::voice::config::VoiceConfig;
 use vox_bridge::voice::registry::VoiceRuntime;
 
 fn create_test_state() -> Arc<AppState> {
-    let (tx, _rx) = broadcast::channel(16);
+    create_test_state_with_core("http://127.0.0.1:3001")
+}
+
+const ALICE: &str = "7d7f3a52-1f3c-4b8e-9a53-2f0e7c1a9b10";
+
+/// Minimal stand-in for Core's `/v1/me`: accepts only `Bearer alice-token`.
+async fn spawn_mock_core() -> String {
+    use axum::{Json, Router, http::HeaderMap, routing::get};
+    let app = Router::new().route(
+        "/v1/me",
+        get(|headers: HeaderMap| async move {
+            match headers.get("authorization").and_then(|v| v.to_str().ok()) {
+                Some("Bearer alice-token") => {
+                    Ok(Json(serde_json::json!({ "user_id": ALICE })))
+                }
+                _ => Err(StatusCode::UNAUTHORIZED),
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}")
+}
+
+fn create_test_state_with_core(core_url: &str) -> Arc<AppState> {
     let twilio = Arc::new(DashMap::new());
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("test-key".into()),
@@ -39,13 +63,12 @@ fn create_test_state() -> Arc<AppState> {
     );
 
     Arc::new(AppState {
-        tx,
         twilio,
         twilio_account_sid: Arc::new("AC123".into()),
         twilio_auth_token: Arc::new("secret".into()),
         twilio_from_number: Arc::new("+1234567890".into()),
         service_token: Arc::new("test-core-token".into()),
-        core_url: Arc::new("http://127.0.0.1:3001".into()),
+        core_url: Arc::new(core_url.into()),
         telephony: None,
         voice,
         core_client,
@@ -54,7 +77,6 @@ fn create_test_state() -> Arc<AppState> {
         whatsapp_access_token: None,
         whatsapp_phone_id: None,
         desktop_sessions: Arc::new(DashMap::new()),
-        desktop_auth_token: Some("desktop-secret-token".into()),
         opt_outs: Arc::new(DashMap::new()),
         notification_deliveries: Arc::new(DashMap::new()),
         messaging_client: None,
@@ -115,7 +137,6 @@ async fn test_desktop_session_unauthorized_without_token() {
     let app = build_router(state);
 
     let req_body = serde_json::to_vec(&CreateDesktopSessionRequest {
-        host_user_id: Some("user-123".into()),
         external_conversation_id: None,
         opening_instruction: None,
     })
@@ -131,21 +152,15 @@ async fn test_desktop_session_unauthorized_without_token() {
 }
 
 #[tokio::test]
-async fn test_desktop_session_bad_request_empty_host_user() {
-    let state = create_test_state();
-    let app = build_router(state);
-
-    let req_body = serde_json::to_vec(&CreateDesktopSessionRequest {
-        host_user_id: Some("   ".into()),
-        external_conversation_id: None,
-        opening_instruction: None,
-    })
-    .unwrap();
+async fn test_desktop_session_rejects_token_core_does_not_accept() {
+    let core = spawn_mock_core().await;
+    let app = build_router(create_test_state_with_core(&core));
 
     let req = Request::post("/bridge/desktop/voice/session")
         .header("content-type", "application/json")
-        .header("authorization", "Bearer desktop-secret-token")
-        .body(Body::from(req_body))
+        // The Core service token must not be able to mint sessions for anyone.
+        .header("authorization", "Bearer test-core-token")
+        .body(Body::from(r#"{"host_user_id":"vox-account:someone-else"}"#))
         .unwrap();
 
     let resp = app.oneshot(req).await.unwrap();
@@ -153,20 +168,22 @@ async fn test_desktop_session_bad_request_empty_host_user() {
 }
 
 #[tokio::test]
-async fn test_desktop_session_creation_success_with_bearer_token() {
-    let state = create_test_state();
+async fn test_desktop_session_owner_comes_from_verified_token() {
+    let core = spawn_mock_core().await;
+    let state = create_test_state_with_core(&core);
     let app = build_router(state.clone());
 
-    let req_body = serde_json::to_vec(&CreateDesktopSessionRequest {
-        host_user_id: Some("usr_desktop_alice".into()),
-        external_conversation_id: Some("conv-alice-42".into()),
-        opening_instruction: Some("Hello Alice".into()),
+    // A client-supplied host_user_id is ignored.
+    let req_body = serde_json::json!({
+        "host_user_id": "vox-account:someone-else",
+        "external_conversation_id": "conv-alice-42",
+        "opening_instruction": "Hello Alice",
     })
-    .unwrap();
+    .to_string();
 
     let req = Request::post("/bridge/desktop/voice/session")
         .header("content-type", "application/json")
-        .header("authorization", "Bearer desktop-secret-token")
+        .header("authorization", "Bearer alice-token")
         .body(Body::from(req_body))
         .unwrap();
 
@@ -188,10 +205,8 @@ async fn test_desktop_session_creation_success_with_bearer_token() {
     );
     assert_eq!(session_resp.expires_in_seconds, 60);
 
-    // Verify ticket registered in AppState
-    assert!(state.desktop_sessions.contains_key(&session_resp.ticket));
     let session = state.desktop_sessions.get(&session_resp.ticket).unwrap();
-    assert_eq!(session.host_user_id, "usr_desktop_alice");
+    assert_eq!(session.host_user_id, format!("vox-account:{ALICE}"));
     assert_eq!(session.external_conversation_id, "conv-alice-42");
     assert_eq!(session.opening_instruction.as_deref(), Some("Hello Alice"));
 }

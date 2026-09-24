@@ -21,7 +21,6 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use tokio::net::TcpListener;
-use tokio::sync::broadcast;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -64,7 +63,6 @@ impl MessagingClient for MockMessaging {
 
 /// Helper to construct a test AppState with mock components
 fn setup_test_app() -> (Arc<AppState>, axum::Router) {
-    let (tx, _rx) = broadcast::channel(16);
     let twilio = Arc::new(DashMap::new());
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("mock-key".into()),
@@ -81,7 +79,6 @@ fn setup_test_app() -> (Arc<AppState>, axum::Router) {
     );
 
     let state = Arc::new(AppState {
-        tx,
         twilio,
         twilio_account_sid: Arc::new("AC123456789".into()),
         twilio_auth_token: Arc::new("mock-twilio-auth-secret".into()),
@@ -96,7 +93,6 @@ fn setup_test_app() -> (Arc<AppState>, axum::Router) {
         whatsapp_access_token: Some("mock-access-token".into()),
         whatsapp_phone_id: Some("100200300".into()),
         desktop_sessions: Arc::new(DashMap::new()),
-        desktop_auth_token: Some("desktop-auth-secret".into()),
         opt_outs: Arc::new(DashMap::new()),
         notification_deliveries: Arc::new(DashMap::new()),
         messaging_client: Some(Arc::new(MockMessaging {

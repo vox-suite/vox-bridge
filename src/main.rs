@@ -3,7 +3,6 @@
 */
 use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 
 use vox_bridge::channels::twilio::{TwilioApiClient, VOICE_STATUS_URL, VOICE_STREAM_URL};
 use vox_bridge::core::client::CoreClient;
@@ -19,7 +18,6 @@ async fn main() {
     install_crypto_provider();
     tracing_subscriber::fmt::init();
 
-    let (tx, _rx) = broadcast::channel(100);
     let twilio_state = Arc::new(DashMap::new());
     let voice_config = VoiceConfig::from_env().expect("voice provider configuration is invalid");
     let core_url = voice_config.secrets.core_url.clone();
@@ -66,12 +64,10 @@ async fn main() {
     let whatsapp_access_token = std::env::var("WHATSAPP_ACCESS_KEY").ok();
     let whatsapp_phone_id = std::env::var("WHATSAPP_PHONE_ID").ok();
     let desktop_sessions = Arc::new(DashMap::new());
-    let desktop_auth_token = std::env::var("DESKTOP_AUTH_TOKEN").ok();
     let opt_outs = Arc::new(DashMap::new());
     let notification_deliveries = Arc::new(DashMap::new());
 
     let app_state = Arc::new(AppState {
-        tx,
         twilio: twilio_state,
         twilio_account_sid: Arc::new(twilio_account_sid),
         twilio_auth_token: Arc::new(twilio_auth_token),
@@ -86,7 +82,6 @@ async fn main() {
         whatsapp_access_token,
         whatsapp_phone_id,
         desktop_sessions,
-        desktop_auth_token,
         opt_outs,
         notification_deliveries,
         messaging_client: None,

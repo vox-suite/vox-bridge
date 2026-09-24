@@ -22,6 +22,8 @@ use crate::voice::session::response::spawn_response;
 use crate::voice::session::speculation::spawn_speculation_watcher;
 use crate::voice::turn::{DraftTurn, is_backchannel};
 
+const MAX_STT_RECONNECTS: u32 = 3;
+
 pub async fn run_voice_session(
     providers: VoiceProviders,
     context: CallContext,
@@ -94,7 +96,8 @@ pub async fn run_voice_session_with_playback(
         ));
     }
 
-    let stt = stt_connect.await?;
+    let mut stt = stt_connect.await?;
+    let mut stt_reconnects = 0u32;
 
     loop {
         tokio::select! {
@@ -124,6 +127,9 @@ pub async fn run_voice_session_with_playback(
                 }
             }
             stt_event = stt.next_event() => {
+                if matches!(stt_event, Ok(Some(_))) {
+                    stt_reconnects = 0;
+                }
                 match stt_event {
                     Ok(Some(SttEvent::SpeechStarted)) => {
                         speech_started_at.get_or_insert_with(std::time::Instant::now);
@@ -226,9 +232,19 @@ pub async fn run_voice_session_with_playback(
                         ctx.revision = Some(draft.revision);
                         let _ = speculation_tx.send(Some((ctx, draft.snapshot())));
                     }
-                    Ok(None) => {}
-                    Err(err) => {
-                        tracing::warn!(error = %err, "STT stream error");
+                    // The STT stream ended or failed: reconnect instead of spinning
+                    // on a dead socket, and give up after a few attempts.
+                    Ok(None) | Err(_) => {
+                        if let Err(err) = &stt_event {
+                            tracing::warn!(error = %err, "STT stream error");
+                        }
+                        stt_reconnects += 1;
+                        if stt_reconnects > MAX_STT_RECONNECTS {
+                            return Err(VoiceError::Protocol("speech recognition unavailable".into()));
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(250 * u64::from(stt_reconnects))).await;
+                        stt = providers.stt.connect().await?;
+                        tracing::info!(attempt = stt_reconnects, "STT stream reconnected");
                     }
                 }
             }

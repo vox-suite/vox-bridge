@@ -3,7 +3,6 @@
 */
 use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 
 use crate::channels::desktop::DesktopSessionState;
 use crate::channels::notifications::{MessagingClient, NotificationDeliveryRecord, OptOutRecord};
@@ -14,7 +13,6 @@ use crate::voice::registry::VoiceRuntime;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub tx: broadcast::Sender<String>,
     pub twilio: Arc<DashMap<String, TwilioState>>,
     pub twilio_account_sid: Arc<String>,
     pub twilio_auth_token: Arc<String>,
@@ -29,7 +27,6 @@ pub struct AppState {
     pub whatsapp_access_token: Option<String>,
     pub whatsapp_phone_id: Option<String>,
     pub desktop_sessions: Arc<DashMap<String, DesktopSessionState>>,
-    pub desktop_auth_token: Option<String>,
     pub opt_outs: Arc<DashMap<String, OptOutRecord>>,
     pub notification_deliveries: Arc<DashMap<String, NotificationDeliveryRecord>>,
     pub messaging_client: Option<Arc<dyn MessagingClient>>,

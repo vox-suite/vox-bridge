@@ -3,10 +3,6 @@
 */
 use axum::{
     Router,
-    extract::{
-        State, WebSocketUpgrade,
-        ws::{Message, WebSocket},
-    },
     response::{Html, IntoResponse},
     routing::{get, post},
 };
@@ -25,7 +21,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(index_handler))
         .route("/health", get(health_handler))
         .route("/auth/bridge", get(auth_bridge_handler))
-        .route("/ws", get(ws_socket_upgrade))
         .route("/bridge/wa", get(wa_verify).post(wa_receive))
         .route("/bridge/twilio/voice", post(initialize_voice_socket))
         .route("/bridge/twilio/voice/stream", get(voice_stream_handler))
@@ -66,20 +61,4 @@ async fn index_handler() -> impl IntoResponse {
 
 async fn health_handler() -> &'static str {
     "ok"
-}
-
-async fn ws_socket_upgrade(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_wa_socket(socket, state))
-}
-
-async fn handle_wa_socket(mut socket: WebSocket, state: Arc<AppState>) {
-    let mut rx = state.tx.subscribe();
-    while let Ok(msg) = rx.recv().await {
-        if socket.send(Message::Text(msg.into())).await.is_err() {
-            break;
-        }
-    }
 }

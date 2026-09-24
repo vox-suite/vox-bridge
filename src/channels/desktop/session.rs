@@ -25,10 +25,10 @@ pub struct DesktopSessionState {
     pub expires_at: Instant,
 }
 
+/// The session owner always comes from the verified bearer token; any
+/// client-supplied user id is ignored.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateDesktopSessionRequest {
-    #[serde(default)]
-    pub host_user_id: Option<String>,
     #[serde(default)]
     pub external_conversation_id: Option<String>,
     #[serde(default)]
@@ -53,7 +53,7 @@ pub async fn create_desktop_session(
     headers: HeaderMap,
     Json(payload): Json<CreateDesktopSessionRequest>,
 ) -> Response {
-    let Some(host_user_id) = resolve_host_user_id(&state, &headers, &payload).await else {
+    let Some(host_user_id) = resolve_host_user_id(&state, &headers).await else {
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     };
 
@@ -73,6 +73,8 @@ pub async fn create_desktop_session(
         expires_at,
     };
 
+    let now = Instant::now();
+    state.desktop_sessions.retain(|_, s| s.expires_at > now);
     state.desktop_sessions.insert(ticket.clone(), session);
 
     let stream_url = format!("/bridge/desktop/voice/stream?ticket={ticket}");
@@ -88,46 +90,30 @@ pub async fn create_desktop_session(
         .into_response()
 }
 
-async fn resolve_host_user_id(
-    state: &AppState,
-    headers: &HeaderMap,
-    payload: &CreateDesktopSessionRequest,
-) -> Option<String> {
+async fn resolve_host_user_id(state: &AppState, headers: &HeaderMap) -> Option<String> {
     let bearer = headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
         .map(str::trim)
         .filter(|t| !t.is_empty())?;
+    let user_id = verify_user_session(state, bearer).await?;
+    Some(format!("vox-account:{user_id}"))
+}
 
-    if let Some(user_id) = verify_user_session(state, bearer).await {
-        return Some(format!("vox-account:{user_id}"));
-    }
-
-    if let Some(desktop_token) = state.desktop_auth_token.as_ref()
-        && subtle::ConstantTimeEq::ct_eq(bearer.as_bytes(), desktop_token.as_bytes()).into()
-    {
-        return payload
-            .host_user_id
-            .as_ref()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-    }
-
-    if subtle::ConstantTimeEq::ct_eq(bearer.as_bytes(), state.service_token.as_bytes()).into() {
-        return payload
-            .host_user_id
-            .as_ref()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-    }
-
-    None
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("reqwest client")
+    })
 }
 
 async fn verify_user_session(state: &AppState, bearer: &str) -> Option<Uuid> {
     let me_url = format!("{}/v1/me", state.core_url.trim_end_matches('/'));
-    let response = reqwest::Client::new()
+    let response = http_client()
         .get(&me_url)
         .header("authorization", format!("Bearer {bearer}"))
         .send()

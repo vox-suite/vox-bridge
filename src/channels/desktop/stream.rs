@@ -116,8 +116,8 @@ async fn handle_desktop_socket(
     let (output_tx, mut output_rx) = mpsc::channel(64);
 
     let mut voice_task = tokio::spawn(run_voice_session_with_playback(
-        providers,
-        context,
+        providers.clone(),
+        context.clone(),
         input_rx,
         output_tx,
         playback.clone(),
@@ -165,12 +165,19 @@ async fn handle_desktop_socket(
             }
             command = output_rx.recv() => {
                 match command {
-                    Some(CallCommand::Media { bytes, .. }) => {
-                        if sender.send(Message::Binary(bytes)).await.is_err() {
+                    // Audio and marks from a reply the user already interrupted are
+                    // dropped, exactly as on the Twilio path.
+                    Some(CallCommand::Media { bytes, generation }) => {
+                        if playback.accepts(generation)
+                            && sender.send(Message::Binary(bytes)).await.is_err()
+                        {
                             break;
                         }
                     }
-                    Some(CallCommand::Mark { name, .. }) => {
+                    Some(CallCommand::Mark { name, generation }) => {
+                        if !playback.accepts(generation) {
+                            continue;
+                        }
                         if let Ok(text) = serialize_outbound_text(&DesktopOutboundText::Mark { name })
                             && sender.send(Message::Text(text.into())).await.is_err()
                         {
@@ -200,5 +207,13 @@ async fn handle_desktop_socket(
         }
     }
 
-    voice_task.abort();
+    if !voice_task.is_finished()
+        && tokio::time::timeout(std::time::Duration::from_secs(5), &mut voice_task)
+            .await
+            .is_err()
+    {
+        voice_task.abort();
+    }
+    // Close out the conversation (summaries, completion) like the Twilio path.
+    let _ = providers.agent.complete(&context).await;
 }
