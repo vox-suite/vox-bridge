@@ -612,7 +612,7 @@ impl ConversationClient for CoreClient {
                 tracing::warn!(
                     conversation_id = %context.external_conversation_id,
                     %status,
-                    body = %body.chars().take(500).collect::<String>(),
+                    response_bytes = body.len(),
                     "CoreClient: Stream request rejected"
                 );
                 Err(VoiceError::Provider {

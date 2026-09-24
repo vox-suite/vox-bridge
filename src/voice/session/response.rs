@@ -125,7 +125,8 @@ async fn stream_response(
     tracing::info!(
         turn = number,
         conversation_id = %context.external_conversation_id,
-        prompt = %transcript,
+        turn_id = ?context.turn_id,
+        prompt_len = transcript.len(),
         "Voice pipeline: processing turn"
     );
 

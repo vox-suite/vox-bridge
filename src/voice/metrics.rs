@@ -73,9 +73,10 @@ pub fn log_turn_latency(
     tracing::info!(
         turn = number,
         conversation_id = %context.external_conversation_id,
+        turn_id = ?context.turn_id,
         prompt_len = prompt.len(),
         response_len = full_response.len(),
-        first_sentence = ?first_sentence,
+        first_sentence_len = first_sentence.map(str::len),
         stt_speech_duration_ms = ?stt_speech_duration_ms,
         stt_endpointing_ms = ?stt_endpointing_ms,
         queue_wait_ms = %queue_wait_ms,
