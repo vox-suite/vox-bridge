@@ -48,6 +48,9 @@ async fn health_check_returns_ok() {
         whatsapp_phone_id: None,
         desktop_sessions: Arc::new(DashMap::new()),
         desktop_auth_token: None,
+        opt_outs: Arc::new(DashMap::new()),
+        notification_deliveries: Arc::new(DashMap::new()),
+        messaging_client: None,
     });
 
     let app = build_router(state);

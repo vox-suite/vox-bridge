@@ -21,4 +21,14 @@ pub trait TelephonyClient: Send + Sync {
         conversation_id: Uuid,
         opening_instruction: Option<&str>,
     ) -> Result<String, TelephonyError>;
+
+    async fn initiate_notification_call(
+        &self,
+        to: &str,
+        reminder_id: Uuid,
+        message: &str,
+    ) -> Result<String, TelephonyError> {
+        self.initiate_call(to, reminder_id, reminder_id, Some(message))
+            .await
+    }
 }

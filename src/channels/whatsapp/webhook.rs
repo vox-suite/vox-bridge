@@ -160,6 +160,48 @@ pub async fn wa_receive(
                                 tts_provider: None,
                                 filler: None,
                             };
+                            if crate::channels::notifications::is_opt_out_keyword(&body) {
+                                let now = crate::channels::notifications::now_epoch_secs();
+                                state.opt_outs.insert(
+                                    format!("whatsapp:{from}"),
+                                    crate::channels::notifications::OptOutRecord {
+                                        destination: from.clone(),
+                                        channel: "whatsapp".into(),
+                                        opted_out_at: now,
+                                        reason: "Opt-out keyword received".into(),
+                                    },
+                                );
+                                state.opt_outs.insert(
+                                    format!("all:{from}"),
+                                    crate::channels::notifications::OptOutRecord {
+                                        destination: from.clone(),
+                                        channel: "all".into(),
+                                        opted_out_at: now,
+                                        reason: "Opt-out keyword received".into(),
+                                    },
+                                );
+                                let reply = "You have unsubscribed from notifications. Reply START to resubscribe.".to_string();
+                                if let (Some(token), Some(phone_id)) =
+                                    (&state.whatsapp_access_token, &state.whatsapp_phone_id)
+                                {
+                                    let _ =
+                                        send_whatsapp_message(token, phone_id, &from, &reply).await;
+                                }
+                                continue;
+                            }
+                            if crate::channels::notifications::is_opt_in_keyword(&body) {
+                                state.opt_outs.remove(&format!("whatsapp:{from}"));
+                                state.opt_outs.remove(&format!("all:{from}"));
+                                let reply = "You have resubscribed to notifications.".to_string();
+                                if let (Some(token), Some(phone_id)) =
+                                    (&state.whatsapp_access_token, &state.whatsapp_phone_id)
+                                {
+                                    let _ =
+                                        send_whatsapp_message(token, phone_id, &from, &reply).await;
+                                }
+                                continue;
+                            }
+
                             let command =
                                 crate::channels::interaction::parse_channel_command(&body);
                             let reply = match command {

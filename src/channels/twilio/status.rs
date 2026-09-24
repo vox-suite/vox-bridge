@@ -68,6 +68,40 @@ pub async fn handle_voice_status(
         ) {
             app_state.twilio.remove(&params.call_sid);
         }
+
+        // Check if this call was a reminder notification
+        for mut entry in app_state.notification_deliveries.iter_mut() {
+            if entry.value().provider_receipt_id.as_deref() == Some(&params.call_sid) {
+                let norm_status = match status.as_str() {
+                    "completed" | "in-progress" => "delivered_to_channel",
+                    "failed" | "busy" | "no-answer" | "canceled" => "failed",
+                    _ => "unknown",
+                };
+                entry.value_mut().status = norm_status.to_string();
+                if norm_status == "failed" {
+                    entry.value_mut().failure_reason = Some(format!("Telephony status: {status}"));
+                }
+                let reminder_id = entry.value().reminder_id;
+                let destination = entry.value().destination.clone();
+                let failure_reason = entry.value().failure_reason.clone();
+                let client = app_state.core_client.clone();
+                let call_sid = params.call_sid.clone();
+                tokio::spawn(async move {
+                    let _ = client
+                        .report_reminder_delivery(
+                            &destination,
+                            reminder_id,
+                            norm_status,
+                            "phone",
+                            &destination,
+                            Some(&call_sid),
+                            failure_reason.as_deref(),
+                        )
+                        .await;
+                });
+                break;
+            }
+        }
     }
 
     StatusCode::OK.into_response()
