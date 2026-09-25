@@ -100,6 +100,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                         "Twilio media arrived before start".into(),
                     ));
                 }
+                InboundStreamMessage::Unknown => {}
             },
             Some(Ok(Message::Close(_))) | None => return Ok(()),
             Some(Ok(_)) => {}
@@ -168,6 +169,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                             InboundStreamMessage::Connected { .. } | InboundStreamMessage::Start { .. } => {
                                 break Err(VoiceError::Protocol("unexpected Twilio stream event".into()));
                             }
+                            InboundStreamMessage::Unknown => {}
                         },
                         Some(Ok(Message::Close(_))) | None => break Ok(()),
                         Some(Ok(_)) => {}

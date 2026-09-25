@@ -45,6 +45,8 @@ pub enum InboundStreamMessage {
         stream_sid: String,
         mark: TwilioMarkPayload,
     },
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Serialize)]
