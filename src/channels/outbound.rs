@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::channels::context::normalized_e164;
 use crate::channels::twilio::webhook::TwilioState;
 use crate::state::AppState;
 
@@ -51,13 +52,15 @@ pub async fn handle_outbound_call(
     if !auth_valid {
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
-    if payload.identity.channel != "phone"
-        || payload.identity.external_id.trim().is_empty()
-        || payload.reason.trim().is_empty()
-        || payload.opening_instruction.trim().is_empty()
-    {
+    // Core stores phone identities digits-only; Twilio requires E.164 with a leading "+".
+    let to_number = normalized_e164(&payload.identity.external_id);
+    let Some(to_number) = to_number.filter(|_| {
+        payload.identity.channel == "phone"
+            && !payload.reason.trim().is_empty()
+            && !payload.opening_instruction.trim().is_empty()
+    }) else {
         return (StatusCode::BAD_REQUEST, "Invalid outbound call request").into_response();
-    }
+    };
 
     let action_str = payload.action_id.to_string();
 
@@ -83,7 +86,7 @@ pub async fn handle_outbound_call(
 
     match telephony
         .initiate_call(
-            &payload.identity.external_id,
+            &to_number,
             payload.action_id,
             payload.conversation_id,
             Some(&payload.opening_instruction),
@@ -96,7 +99,7 @@ pub async fn handle_outbound_call(
                 TwilioState {
                     call_sid: call_sid.clone(),
                     account_sid: state.twilio_account_sid.to_string(),
-                    from: payload.identity.external_id,
+                    from: to_number,
                     to: state.twilio_from_number.to_string(),
                     call_status: Some("in_progress".into()),
                     opening_instruction: Some(payload.opening_instruction),
