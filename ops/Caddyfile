@@ -1,7 +1,9 @@
 api.voxagent.in {
 	# Block scanner / bot probes
-	@probes path /.env* /.git* /wp-* *.php /admin/*
-	respond @probes 403
+	@probe_paths path /.env* /.git* /wp-* *.php /admin/*
+	@probe_headers header Next-Action *
+	respond @probe_paths 403
+	respond @probe_headers 403
 
 	# Admin routes to core-api
 	handle /v1/admin/redis* {
@@ -28,7 +30,12 @@ api.voxagent.in {
 	handle /internal/* {
 		reverse_proxy 127.0.0.1:3000
 	}
-	handle_path / {
+	# Root landing route: strictly GET/HEAD to bridge
+	@root_get {
+		method GET HEAD
+		path /
+	}
+	handle @root_get {
 		reverse_proxy 127.0.0.1:3000
 	}
 
