@@ -123,7 +123,7 @@ pub struct DurableTask {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CreateProposalRequest {
-    pub task_id: Uuid,
+    pub span_id: Uuid,
     pub task_run_id: Uuid,
     pub agent_external_key: String,
     pub capability_external_key: String,
