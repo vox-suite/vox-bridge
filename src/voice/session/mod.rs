@@ -24,6 +24,55 @@ use crate::voice::turn::{DraftTurn, is_backchannel};
 
 const MAX_STT_RECONNECTS: u32 = 3;
 
+/// A spawned voice session together with the channels used to drive it.
+/// Shared by every channel (Twilio, desktop, ...) that bridges a transport
+/// socket onto `run_voice_session_with_playback`.
+pub struct VoiceSessionHandle {
+    pub playback: Arc<PlaybackState>,
+    pub input: mpsc::Sender<CallEvent>,
+    pub output: mpsc::Receiver<CallCommand>,
+    pub task: JoinHandle<Result<(), VoiceError>>,
+}
+
+pub fn spawn_playback_session(
+    providers: VoiceProviders,
+    context: CallContext,
+) -> VoiceSessionHandle {
+    let playback = Arc::new(PlaybackState::new());
+    let (input_tx, input_rx) = mpsc::channel(64);
+    let (output_tx, output_rx) = mpsc::channel(64);
+    let task = tokio::spawn(run_voice_session_with_playback(
+        providers,
+        context,
+        input_rx,
+        output_tx,
+        playback.clone(),
+    ));
+    VoiceSessionHandle {
+        playback,
+        input: input_tx,
+        output: output_rx,
+        task,
+    }
+}
+
+/// Waits briefly for the session task to wind down on its own, then aborts it,
+/// and closes out the conversation with the agent either way.
+pub async fn shutdown_playback_session(
+    mut task: JoinHandle<Result<(), VoiceError>>,
+    providers: &VoiceProviders,
+    context: &CallContext,
+) {
+    if !task.is_finished()
+        && tokio::time::timeout(std::time::Duration::from_secs(5), &mut task)
+            .await
+            .is_err()
+    {
+        task.abort();
+    }
+    let _ = providers.agent.complete(context).await;
+}
+
 pub async fn run_voice_session(
     providers: VoiceProviders,
     context: CallContext,

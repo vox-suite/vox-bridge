@@ -451,7 +451,7 @@ pub async fn handle_notification_dispatch(
                 )
             }
         }
-        "whatsapp" | "messaging" | "sms" => {
+        "whatsapp" | "messaging" => {
             if let Some(messaging) = state.messaging_client.as_ref() {
                 let msg_text = format!("*{clean_title}*\n{clean_message}");
                 match messaging

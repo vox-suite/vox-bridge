@@ -13,7 +13,6 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 use crate::channels::context::CallContext;
 use crate::channels::twilio::protocol::{
@@ -25,7 +24,7 @@ use crate::channels::twilio::webhook::{TwilioState, VOICE_STREAM_URL};
 use crate::state::AppState;
 use crate::voice::provider::VoiceError;
 use crate::voice::session::{
-    CallCommand, CallEvent, PlaybackState, run_voice_session_with_playback,
+    CallCommand, CallEvent, VoiceSessionHandle, shutdown_playback_session, spawn_playback_session,
 };
 
 pub fn parse_inbound(raw: &str) -> Result<InboundStreamMessage, VoiceError> {
@@ -133,16 +132,12 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         filler: None,
     };
     let providers = state.voice.providers.providers_for(&profile)?;
-    let playback = Arc::new(PlaybackState::new());
-    let (input_tx, input_rx) = mpsc::channel(64);
-    let (output_tx, mut output_rx) = mpsc::channel(64);
-    let mut voice_task = tokio::spawn(run_voice_session_with_playback(
-        providers.clone(),
-        context.clone(),
-        input_rx,
-        output_tx,
-        playback.clone(),
-    ));
+    let VoiceSessionHandle {
+        playback,
+        input: input_tx,
+        output: mut output_rx,
+        task: mut voice_task,
+    } = spawn_playback_session(providers.clone(), context.clone());
     let result = async {
         loop {
             tokio::select! {
@@ -217,14 +212,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         input_tx.send(CallEvent::Stop),
     )
     .await;
-    if !voice_task.is_finished()
-        && tokio::time::timeout(std::time::Duration::from_secs(5), &mut voice_task)
-            .await
-            .is_err()
-    {
-        voice_task.abort();
-    }
-    let _ = providers.agent.complete(&context).await;
+    shutdown_playback_session(voice_task, &providers, &context).await;
     state.twilio.remove(&call_sid);
     tracing::info!(%stream_sid, %call_sid, "Twilio media stream closed");
     result

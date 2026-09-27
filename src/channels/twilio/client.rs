@@ -8,6 +8,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::providers::telephony::{TelephonyClient, TelephonyError};
+use crate::retry::retry_with_backoff;
 
 pub struct TwilioApiClient {
     client: Client,
@@ -80,24 +81,29 @@ impl TelephonyClient for TwilioApiClient {
             ("StatusCallbackEvent", "completed"),
         ];
 
-        let response = self
-            .client
-            .post(&endpoint)
-            .basic_auth(&self.account_sid, Some(&self.auth_token))
-            .form(&params)
-            .send()
-            .await?;
+        let response = retry_with_backoff(3, Duration::from_millis(300), || async {
+            let response = self
+                .client
+                .post(&endpoint)
+                .basic_auth(&self.account_sid, Some(&self.auth_token))
+                .form(&params)
+                .send()
+                .await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "no body".to_string());
-            return Err(TelephonyError::Provider(format!(
-                "Twilio API error {status}: {body}"
-            )));
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "no body".to_string());
+                return Err(TelephonyError::Provider(format!(
+                    "Twilio API error {status}: {body}"
+                )));
+            }
+
+            Ok(response)
+        })
+        .await?;
 
         let parsed: TwilioCallResponse = response.json().await?;
         Ok(parsed.sid)

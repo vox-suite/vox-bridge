@@ -7,6 +7,7 @@ pub mod channels;
 pub mod config;
 pub mod core;
 pub mod providers;
+pub mod retry;
 pub mod state;
 pub mod voice;
 

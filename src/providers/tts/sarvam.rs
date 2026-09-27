@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::time::Duration;
 
 use crate::providers::tts::{AudioStream, TtsProvider};
+use crate::retry::retry_with_backoff;
 use crate::voice::provider::VoiceError;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -83,26 +84,31 @@ impl TtsProvider for SarvamTts {
             self.endpoint.trim_end_matches('/')
         );
         let tts_http_start = std::time::Instant::now();
-        let response = tokio::time::timeout(
-            Duration::from_secs(15),
-            self.http
-                .post(url)
-                .header("api-subscription-key", &self.api_key)
-                .json(&request)
-                .send(),
-        )
-        .await
-        .map_err(|_| VoiceError::Timeout("Sarvam response"))?
-        .map_err(|err| {
-            tracing::error!(error = %err, "Sarvam request send failed");
-            provider_error("request failed")
-        })?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            tracing::error!(status = %status, error_body = %body, "Sarvam TTS API returned error");
-            return Err(provider_error("request failed"));
-        }
+        let response = retry_with_backoff(3, Duration::from_millis(300), || async {
+            let response = tokio::time::timeout(
+                Duration::from_secs(15),
+                self.http
+                    .post(&url)
+                    .header("api-subscription-key", &self.api_key)
+                    .json(&request)
+                    .send(),
+            )
+            .await
+            .map_err(|_| VoiceError::Timeout("Sarvam response"))?
+            .map_err(|err| {
+                tracing::error!(error = %err, "Sarvam request send failed");
+                provider_error("request failed")
+            })?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                tracing::error!(status = %status, error_body = %body, "Sarvam TTS API returned error");
+                return Err(provider_error("request failed"));
+            }
+
+            Ok(response)
+        })
+        .await?;
         tracing::debug!(
             char_count = text.len(),
             http_latency_ms = tts_http_start.elapsed().as_millis(),

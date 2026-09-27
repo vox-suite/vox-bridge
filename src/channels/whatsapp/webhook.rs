@@ -77,11 +77,7 @@ pub async fn wa_verify(
     State(state): State<Arc<AppState>>,
     Query(p): Query<VerifyParams>,
 ) -> impl IntoResponse {
-    let verify_key = state
-        .whatsapp_verify_token
-        .clone()
-        .or_else(|| std::env::var("WA_VERIFY_KEY").ok())
-        .unwrap_or_default();
+    let verify_key = state.whatsapp_verify_token.clone().unwrap_or_default();
 
     if p.mode.as_deref() == Some("subscribe") && p.token.as_deref() == Some(verify_key.as_str()) {
         (StatusCode::OK, p.challenge.unwrap_or_default())
@@ -116,11 +112,7 @@ pub async fn wa_receive(
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    let secret = state
-        .whatsapp_app_secret
-        .clone()
-        .or_else(|| std::env::var("META_APP_SECRET").ok())
-        .unwrap_or_default();
+    let secret = state.whatsapp_app_secret.clone().unwrap_or_default();
 
     if !valid_signature(&secret, &headers, &body) {
         tracing::warn!("wa: rejected unsigned/invalid request");
@@ -259,16 +251,8 @@ pub async fn wa_receive(
                                 }
                             };
 
-                            let token = state
-                                .whatsapp_access_token
-                                .clone()
-                                .or_else(|| std::env::var("WHATSAPP_ACCESS_KEY").ok())
-                                .unwrap_or_default();
-                            let phone_id = state
-                                .whatsapp_phone_id
-                                .clone()
-                                .or_else(|| std::env::var("WHATSAPP_PHONE_ID").ok())
-                                .unwrap_or_default();
+                            let token = state.whatsapp_access_token.clone().unwrap_or_default();
+                            let phone_id = state.whatsapp_phone_id.clone().unwrap_or_default();
                             let _ = send_whatsapp_message(&token, &phone_id, from.as_str(), &reply)
                                 .await;
                         }

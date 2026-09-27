@@ -13,7 +13,6 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::mpsc;
 
 use crate::channels::context::CallContext;
 use crate::channels::desktop::protocol::{
@@ -22,7 +21,7 @@ use crate::channels::desktop::protocol::{
 use crate::channels::desktop::session::DesktopSessionState;
 use crate::state::AppState;
 use crate::voice::session::{
-    CallCommand, CallEvent, PlaybackState, run_voice_session_with_playback,
+    CallCommand, CallEvent, VoiceSessionHandle, shutdown_playback_session, spawn_playback_session,
 };
 
 #[derive(Deserialize)]
@@ -111,17 +110,12 @@ async fn handle_desktop_socket(
         }
     };
 
-    let playback = Arc::new(PlaybackState::new());
-    let (input_tx, input_rx) = mpsc::channel(64);
-    let (output_tx, mut output_rx) = mpsc::channel(64);
-
-    let mut voice_task = tokio::spawn(run_voice_session_with_playback(
-        providers.clone(),
-        context.clone(),
-        input_rx,
-        output_tx,
-        playback.clone(),
-    ));
+    let VoiceSessionHandle {
+        playback,
+        input: input_tx,
+        output: mut output_rx,
+        task: mut voice_task,
+    } = spawn_playback_session(providers.clone(), context.clone());
 
     loop {
         tokio::select! {
@@ -207,13 +201,6 @@ async fn handle_desktop_socket(
         }
     }
 
-    if !voice_task.is_finished()
-        && tokio::time::timeout(std::time::Duration::from_secs(5), &mut voice_task)
-            .await
-            .is_err()
-    {
-        voice_task.abort();
-    }
     // Close out the conversation (summaries, completion) like the Twilio path.
-    let _ = providers.agent.complete(&context).await;
+    shutdown_playback_session(voice_task, &providers, &context).await;
 }
