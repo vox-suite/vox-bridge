@@ -304,7 +304,7 @@ impl SttSession for AssemblyAiSession {
                     }
                 }
                 Some(Ok(Message::Close(_))) | None => return Ok(None),
-                Some(Ok(_)) => {}\
+                Some(Ok(_)) => {}
                 Some(Err(_)) => return Err(provider_error("streaming receive failed")),
             }
         }
