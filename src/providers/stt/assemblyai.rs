@@ -122,13 +122,11 @@ impl AssemblyAiStt {
             self.endpoint, self.model, self.encoding, self.sample_rate, self.min_turn_silence, self.max_turn_silence
         );
 
-        if !self.word_boost.is_empty() {
-            if let Ok(boost_json) = serde_json::to_string(&self.word_boost) {
-                if let Ok(encoded) = serde_urlencoded::to_string([("word_boost", &boost_json)]) {
-                    url.push('&');
-                    url.push_str(&encoded);
-                }
-            }
+        if !self.word_boost.is_empty()
+            && let Ok(boost_json) = serde_json::to_string(&self.word_boost)
+            && let Ok(encoded) = serde_urlencoded::to_string([("word_boost", &boost_json)]) {
+            url.push('&');
+            url.push_str(&encoded);
         }
 
         Ok(url)

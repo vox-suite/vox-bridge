@@ -207,10 +207,9 @@ fn clean_json_fences(raw: &str) -> &str {
         if let Some(inner) = stripped.strip_suffix("```") {
             return inner.trim();
         }
-    } else if let Some(stripped) = trimmed.strip_prefix("```") {
-        if let Some(inner) = stripped.strip_suffix("```") {
-            return inner.trim();
-        }
+    } else if let Some(stripped) = trimmed.strip_prefix("```")
+        && let Some(inner) = stripped.strip_suffix("```") {
+        return inner.trim();
     }
     trimmed
 }
