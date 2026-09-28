@@ -31,7 +31,7 @@ The default provider profile uses ElevenLabs TTS:
 VOX_STT_PROVIDER=assemblyai
 ASSEMBLYAI_SPEECH_MODEL=universal-3-5-pro
 VOX_TTS_PROVIDER=elevenlabs
-ELEVENLABS_MODEL_ID=eleven_flash_v2_5
+ELEVENLABS_MODEL_ID=eleven_v4_turbo
 ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 ```
 

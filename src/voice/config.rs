@@ -115,7 +115,7 @@ impl VoiceConfig {
                         })?;
                     let tts_model = get("ELEVENLABS_MODEL_ID")
                         .filter(|v| !v.trim().is_empty())
-                        .unwrap_or_else(|| "eleven_flash_v2_5".to_string());
+                        .unwrap_or_else(|| "eleven_v4_turbo".to_string());
                     let speaker = get("ELEVENLABS_VOICE_ID")
                         .filter(|v| !v.trim().is_empty())
                         .unwrap_or_else(|| "21m00Tcm4TlvDq8ikWAM".to_string());

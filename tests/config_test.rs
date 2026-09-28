@@ -21,7 +21,7 @@ fn applies_the_default_voice_profile() {
     assert_eq!(config.profile.stt.model, "universal-3-5-pro");
     assert_eq!(config.profile.agent.provider, "vox-core");
     assert_eq!(config.profile.tts.provider, "elevenlabs");
-    assert_eq!(config.profile.tts.model, "eleven_flash_v2_5");
+    assert_eq!(config.profile.tts.model, "eleven_v4_turbo");
     assert_eq!(config.profile.tts.speaker, "21m00Tcm4TlvDq8ikWAM");
     assert_eq!(config.secrets.core_url, "http://core-api:3001");
     assert_eq!(config.secrets.core_auth_token, "shared-auth-token");

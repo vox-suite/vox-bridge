@@ -33,22 +33,19 @@ pub struct ElevenLabsTts {
     settings: ElevenLabsSettings,
 }
 
+// Eleven v4 / v4 Turbo are only served through the Text to Dialogue API, not
+// the older single-voice /text-to-speech endpoint, so every request goes
+// through /v1/text-to-dialogue/stream with one dialogue turn.
 #[derive(Serialize)]
-struct ElevenLabsRequest<'a> {
-    text: &'a str,
+struct ElevenLabsDialogueRequest<'a> {
+    inputs: [ElevenLabsDialogueInput<'a>; 1],
     model_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    voice_settings: Option<ElevenLabsVoiceSettingsRequest>,
 }
 
 #[derive(Serialize)]
-struct ElevenLabsVoiceSettingsRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stability: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    similarity_boost: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    speed: Option<f64>,
+struct ElevenLabsDialogueInput<'a> {
+    text: &'a str,
+    voice_id: &'a str,
 }
 
 impl ElevenLabsTts {
@@ -82,26 +79,17 @@ impl TtsProvider for ElevenLabsTts {
             return Ok(Box::pin(futures_util::stream::empty()));
         }
 
-        let voice_settings =
-            self.settings
-                .voice_settings
-                .as_ref()
-                .map(|s| ElevenLabsVoiceSettingsRequest {
-                    stability: s.stability,
-                    similarity_boost: s.similarity_boost,
-                    speed: s.speed,
-                });
-
-        let request = ElevenLabsRequest {
-            text: trimmed,
+        let request = ElevenLabsDialogueRequest {
+            inputs: [ElevenLabsDialogueInput {
+                text: trimmed,
+                voice_id: &self.settings.voice_id,
+            }],
             model_id: &self.settings.model,
-            voice_settings,
         };
 
         let url = format!(
-            "{}/v1/text-to-speech/{}/stream?output_format={}",
+            "{}/v1/text-to-dialogue/stream?output_format={}",
             self.endpoint.trim_end_matches('/'),
-            self.settings.voice_id,
             self.settings.output_format,
         );
 
