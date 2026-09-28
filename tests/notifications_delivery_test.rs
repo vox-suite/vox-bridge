@@ -157,6 +157,9 @@ fn create_test_state(
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("test-assembly-key".into()),
         "VOX_CORE_URL" => Some(url.clone()),
+        "VOX_HOST_CREDENTIAL_ID" => Some("11111111-1111-4111-8111-111111111111".into()),
+        "VOX_HOST_AUDIENCE" => Some("vox-host:test:bridge".into()),
+        "VOX_HOST_SECRET" => Some("test-host-secret".into()),
         "VOX_AUTH_TOKEN" => Some("test-token".into()),
         "ELEVENLABS_API_KEY" => Some("test-key".into()),
         _ => None,

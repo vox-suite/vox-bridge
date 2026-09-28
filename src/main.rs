@@ -25,6 +25,7 @@ async fn main() {
 
     let core_client = Arc::new(
         CoreClient::new(core_url.clone(), auth_token.clone())
+            .and_then(CoreClient::with_host_trust_from_env)
             .expect("core client initialization failed"),
     );
 

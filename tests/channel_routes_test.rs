@@ -19,6 +19,9 @@ async fn health_check_returns_ok() {
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("key".into()),
         "VOX_CORE_URL" => Some("http://127.0.0.1:3001".into()),
+        "VOX_HOST_CREDENTIAL_ID" => Some("11111111-1111-4111-8111-111111111111".into()),
+        "VOX_HOST_AUDIENCE" => Some("vox-host:test:bridge".into()),
+        "VOX_HOST_SECRET" => Some("test-host-secret".into()),
         "VOX_AUTH_TOKEN" => Some("svc-token".into()),
         "ELEVENLABS_API_KEY" => Some("el-key".into()),
         _ => None,

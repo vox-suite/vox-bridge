@@ -33,9 +33,7 @@ async fn spawn_mock_core() -> String {
         "/v1/me",
         get(|headers: HeaderMap| async move {
             match headers.get("authorization").and_then(|v| v.to_str().ok()) {
-                Some("Bearer alice-token") => {
-                    Ok(Json(serde_json::json!({ "user_id": ALICE })))
-                }
+                Some("Bearer alice-token") => Ok(Json(serde_json::json!({ "user_id": ALICE }))),
                 _ => Err(StatusCode::UNAUTHORIZED),
             }
         }),
@@ -51,6 +49,9 @@ fn create_test_state_with_core(core_url: &str) -> Arc<AppState> {
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("test-key".into()),
         "VOX_CORE_URL" => Some("http://127.0.0.1:3001".into()),
+        "VOX_HOST_CREDENTIAL_ID" => Some("11111111-1111-4111-8111-111111111111".into()),
+        "VOX_HOST_AUDIENCE" => Some("vox-host:test:bridge".into()),
+        "VOX_HOST_SECRET" => Some("test-host-secret".into()),
         "VOX_AUTH_TOKEN" => Some("test-core-token".into()),
         "ELEVENLABS_API_KEY" => Some("test-el-key".into()),
         _ => None,

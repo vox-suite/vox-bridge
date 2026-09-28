@@ -85,12 +85,14 @@ impl VoiceRuntime {
             .build()
             .map_err(|_| VoiceError::Configuration("HTTP client creation failed".into()))?;
         let profile = config.profile.clone();
+        let host_config = config.secrets.clone();
         let stt: Arc<dyn SttProvider> = Arc::new(AssemblyAiStt::new(
             config.secrets.assemblyai_api_key,
             profile.stt.model.clone(),
         ));
         let agent: Arc<dyn AgentProvider> = Arc::new(
             CoreClient::new(config.secrets.core_url, config.secrets.core_auth_token)?
+                .with_host_trust_from_config(&host_config)?
                 .with_tts_provider(profile.tts.provider.clone()),
         );
         let tts: Arc<dyn TtsProvider> = match profile.tts.provider.as_str() {

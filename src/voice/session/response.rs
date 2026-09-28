@@ -412,7 +412,9 @@ async fn speak_apology(
         return;
     }
     let apology = match error {
-        VoiceError::Timeout(_) => "Sorry, that's taking longer than expected. Could you say that again?",
+        VoiceError::Timeout(_) => {
+            "Sorry, that's taking longer than expected. Could you say that again?"
+        }
         _ => "Sorry, I ran into a problem with that. Could you try again?",
     };
     let mut first_audio_tracker = None;

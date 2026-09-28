@@ -12,6 +12,8 @@ pub struct IdentityPayload<'a> {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RespondRequest<'a> {
+    pub host_context: HostContextRequest,
+    pub agent_external_key: &'a str,
     pub identity: IdentityPayload<'a>,
     pub external_conversation_id: &'a str,
     pub text: &'a str,
@@ -34,6 +36,8 @@ pub struct RespondResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SpeculateRequest<'a> {
+    pub host_context: HostContextRequest,
+    pub agent_external_key: &'a str,
     pub identity: IdentityPayload<'a>,
     pub external_conversation_id: &'a str,
     pub text: &'a str,
@@ -47,6 +51,8 @@ pub struct SpeculateRequest<'a> {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompleteRequest<'a> {
+    pub host_context: HostContextRequest,
+    pub agent_external_key: &'a str,
     pub identity: IdentityPayload<'a>,
     pub external_conversation_id: &'a str,
 }
