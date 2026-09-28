@@ -79,3 +79,16 @@ Run `cargo test --locked`, strict Clippy, and a release build to verify locally.
 Tests use local network boundaries and do not call paid provider APIs. Local
 verification does not prove the binary is deployed or that a real phone call
 works with the deployed credentials.
+
+## Deploy on Railway
+
+Deploy this repo as one service (`vox-bridge`) using the root `Dockerfile` with an empty root directory. It binds `0.0.0.0:$PORT`.
+
+Variables:
+
+- `VOX_CORE_URL`: `http://vox-core-api.railway.internal:<core PORT>`
+- `VOX_AUTH_TOKEN`: the same value as on `vox-core-api` and `vox-core-worker`
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
+- `ASSEMBLYAI_API_KEY`, `SARVAM_API_KEY`, `VOX_STT_PROVIDER`, `VOX_TTS_PROVIDER`
+
+Only the edge (`vox-edge`) has a public domain. It routes `/bridge/*` here, so Twilio and WhatsApp webhooks point at `https://api.voxagent.in/bridge/...`. The service also exposes `/health/live`, `/health/ready` and `/internal/v1/**`, none of which the edge forwards. See `vox-edge/ROUTING.md`.

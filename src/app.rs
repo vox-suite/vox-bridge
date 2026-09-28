@@ -8,7 +8,6 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::auth_bridge::auth_bridge_handler;
 use crate::channels::desktop::{create_desktop_session, desktop_stream_handler};
 use crate::channels::notifications::{handle_notification_dispatch, handle_opt_in, handle_opt_out};
 use crate::channels::outbound::handle_outbound_call;
@@ -19,8 +18,8 @@ use crate::state::AppState;
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index_handler))
-        .route("/health", get(health_handler))
-        .route("/auth/bridge", get(auth_bridge_handler))
+        .route("/health/live", get(health_handler))
+        .route("/health/ready", get(health_handler))
         .route("/bridge/wa", get(wa_verify).post(wa_receive))
         .route("/bridge/twilio/voice", post(initialize_voice_socket))
         .route("/bridge/twilio/voice/stream", get(voice_stream_handler))
@@ -34,13 +33,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/internal/v1/actions/outbound-call",
             post(handle_outbound_call),
         )
-        .route("/channels/outbound-call", post(handle_outbound_call))
         .route(
             "/internal/v1/notifications/dispatch",
-            post(handle_notification_dispatch),
-        )
-        .route(
-            "/channels/notifications/dispatch",
             post(handle_notification_dispatch),
         )
         .route("/internal/v1/notifications/opt-out", post(handle_opt_out))

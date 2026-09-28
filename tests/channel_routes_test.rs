@@ -53,7 +53,7 @@ async fn health_check_returns_ok() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/health")
+                .uri("/health/live")
                 .body(Body::empty())
                 .unwrap(),
         )

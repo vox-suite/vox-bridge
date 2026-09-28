@@ -28,10 +28,10 @@ const ALICE: &str = "7d7f3a52-1f3c-4b8e-9a53-2f0e7c1a9b10";
 
 /// Minimal stand-in for Core's `/v1/me`: accepts only `Bearer alice-token`.
 async fn spawn_mock_core() -> String {
-    use axum::{Json, Router, http::HeaderMap, routing::get};
+    use axum::{Json, Router, http::HeaderMap, routing::post};
     let app = Router::new().route(
         "/v1/me",
-        get(|headers: HeaderMap| async move {
+        post(|headers: HeaderMap| async move {
             match headers.get("authorization").and_then(|v| v.to_str().ok()) {
                 Some("Bearer alice-token") => {
                     Ok(Json(serde_json::json!({ "user_id": ALICE })))

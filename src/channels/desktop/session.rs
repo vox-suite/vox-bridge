@@ -114,7 +114,7 @@ fn http_client() -> &'static reqwest::Client {
 async fn verify_user_session(state: &AppState, bearer: &str) -> Option<Uuid> {
     let me_url = format!("{}/v1/me", state.core_url.trim_end_matches('/'));
     let response = http_client()
-        .get(&me_url)
+        .post(&me_url)
         .header("authorization", format!("Bearer {bearer}"))
         .send()
         .await
