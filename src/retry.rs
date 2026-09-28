@@ -3,7 +3,11 @@
 */
 use std::time::Duration;
 
-pub async fn retry_with_backoff<T, E, F, Fut>(attempts: u32, base_delay: Duration, mut f: F) -> Result<T, E>
+pub async fn retry_with_backoff<T, E, F, Fut>(
+    attempts: u32,
+    base_delay: Duration,
+    mut f: F,
+) -> Result<T, E>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,

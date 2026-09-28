@@ -67,6 +67,9 @@ fn setup_test_app() -> (Arc<AppState>, axum::Router) {
     let config = VoiceConfig::from_values(|k| match k {
         "ASSEMBLYAI_API_KEY" => Some("mock-key".into()),
         "VOX_CORE_URL" => Some("http://127.0.0.1:3001".into()),
+        "VOX_HOST_CREDENTIAL_ID" => Some("11111111-1111-4111-8111-111111111111".into()),
+        "VOX_HOST_AUDIENCE" => Some("vox-host:test:bridge".into()),
+        "VOX_HOST_SECRET" => Some("test-host-secret".into()),
         "VOX_AUTH_TOKEN" => Some("test-core-token".into()),
         "ELEVENLABS_API_KEY" => Some("mock-el-key".into()),
         _ => None,
@@ -286,7 +289,13 @@ async fn test_channel_reconnect_synchronizes_authoritative_core_state() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into()).unwrap();
+    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into())
+        .unwrap()
+        .with_host_trust(
+            Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
+            "vox-host:test:bridge",
+            "test-host-secret",
+        );
     let context = CallContext {
         channel: "voice".into(),
         external_identity: "+15551234567".into(),
@@ -439,7 +448,13 @@ async fn test_consequential_approval_changed_proposal_and_duplicate_decision() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into()).unwrap();
+    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into())
+        .unwrap()
+        .with_host_trust(
+            Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
+            "vox-host:test:bridge",
+            "test-host-secret",
+        );
     let context = CallContext {
         channel: "whatsapp".into(),
         external_identity: "+15551234567".into(),
@@ -494,7 +509,13 @@ async fn test_unknown_outcome_and_core_unreachable_fail_closed() {
     let proposal_id = Uuid::new_v4();
 
     // Port with no listener -> communication failure
-    let client = CoreClient::new("http://127.0.0.1:59998".into(), "test-token".into()).unwrap();
+    let client = CoreClient::new("http://127.0.0.1:59998".into(), "test-token".into())
+        .unwrap()
+        .with_host_trust(
+            Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
+            "vox-host:test:bridge",
+            "test-host-secret",
+        );
     let context = CallContext {
         channel: "voice".into(),
         external_identity: "+15551234567".into(),

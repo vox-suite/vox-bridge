@@ -56,6 +56,7 @@ pub struct CoreClient {
     host_credential_id: Option<Uuid>,
     host_audience: Option<String>,
     host_secret: Option<String>,
+    agent_external_key: String,
 }
 
 impl CoreClient {
@@ -84,6 +85,7 @@ impl CoreClient {
             host_credential_id: None,
             host_audience: None,
             host_secret: None,
+            agent_external_key: "general".into(),
         })
     }
 
@@ -102,6 +104,62 @@ impl CoreClient {
         self.host_audience = Some(audience.into());
         self.host_secret = Some(secret.into());
         self
+    }
+
+    pub fn with_host_trust_from_config(
+        mut self,
+        config: &crate::voice::config::VoiceSecrets,
+    ) -> Result<Self, VoiceError> {
+        let id = config
+            .host_credential_id
+            .as_deref()
+            .ok_or_else(|| {
+                VoiceError::Configuration(
+                    "VOX_HOST_CREDENTIAL_ID is required for authenticated Core conversations"
+                        .into(),
+                )
+            })?
+            .parse()
+            .map_err(|_| {
+                VoiceError::Configuration("VOX_HOST_CREDENTIAL_ID must be a UUID".into())
+            })?;
+        let audience = config
+            .host_audience
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| VoiceError::Configuration("VOX_HOST_AUDIENCE is required".into()))?;
+        let secret = config
+            .host_secret
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| VoiceError::Configuration("VOX_HOST_SECRET is required".into()))?;
+        self = self.with_host_trust(id, audience.to_string(), secret.to_string());
+        self.agent_external_key = config.agent_external_key.clone();
+        Ok(self)
+    }
+
+    pub fn with_host_trust_from_env(self) -> Result<Self, VoiceError> {
+        let required = |key: &str| {
+            std::env::var(key)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .ok_or_else(|| {
+                    VoiceError::Configuration(format!(
+                        "{key} is required for authenticated Core conversations"
+                    ))
+                })
+        };
+        let id = required("VOX_HOST_CREDENTIAL_ID")?.parse().map_err(|_| {
+            VoiceError::Configuration("VOX_HOST_CREDENTIAL_ID must be a UUID".into())
+        })?;
+        let mut client = self.with_host_trust(
+            id,
+            required("VOX_HOST_AUDIENCE")?,
+            required("VOX_HOST_SECRET")?,
+        );
+        client.agent_external_key =
+            std::env::var("VOX_AGENT_KEY").unwrap_or_else(|_| "general".into());
+        Ok(client)
     }
 
     pub fn base_url(&self) -> &str {
@@ -149,6 +207,10 @@ impl CoreClient {
                 .header("x-vox-host-timestamp", now_secs.to_string())
                 .header("x-vox-host-nonce", nonce.to_string())
                 .header("x-vox-host-signature", signature);
+        } else {
+            return Err(VoiceError::Configuration(
+                "Registered host credentials are required".into(),
+            ));
         }
         Ok(request)
     }
@@ -503,6 +565,11 @@ impl CoreClient {
 impl ConversationClient for CoreClient {
     async fn respond(&self, context: &CallContext, transcript: &str) -> Result<String, VoiceError> {
         let payload = RespondRequest {
+            host_context: HostContextRequest {
+                host_user_id: context.external_identity.clone(),
+                organization_external_key: None,
+            },
+            agent_external_key: &self.agent_external_key,
             identity: IdentityPayload {
                 channel: &context.channel,
                 external_id: &context.external_identity,
@@ -555,6 +622,11 @@ impl ConversationClient for CoreClient {
         let stream_endpoint = format!("{}/v1/conversations/respond/stream", self.base_url);
         let start_time = std::time::Instant::now();
         let payload = RespondRequest {
+            host_context: HostContextRequest {
+                host_user_id: context.external_identity.clone(),
+                organization_external_key: None,
+            },
+            agent_external_key: &self.agent_external_key,
             identity: IdentityPayload {
                 channel: &context.channel,
                 external_id: &context.external_identity,
@@ -654,6 +726,11 @@ impl ConversationClient for CoreClient {
 
     async fn speculate(&self, context: &CallContext, transcript: &str) -> Result<(), VoiceError> {
         let payload = SpeculateRequest {
+            host_context: HostContextRequest {
+                host_user_id: context.external_identity.clone(),
+                organization_external_key: None,
+            },
+            agent_external_key: &self.agent_external_key,
             identity: IdentityPayload {
                 channel: &context.channel,
                 external_id: &context.external_identity,
@@ -694,6 +771,11 @@ impl ConversationClient for CoreClient {
     async fn complete(&self, context: &CallContext) -> Result<(), VoiceError> {
         let endpoint = format!("{}/v1/conversations/complete", self.base_url);
         let payload = CompleteRequest {
+            host_context: HostContextRequest {
+                host_user_id: context.external_identity.clone(),
+                organization_external_key: None,
+            },
+            agent_external_key: &self.agent_external_key,
             identity: IdentityPayload {
                 channel: &context.channel,
                 external_id: &context.external_identity,

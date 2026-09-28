@@ -240,7 +240,13 @@ async fn test_cannot_forge_approval_when_core_rejects_expired_or_changed_proposa
         axum::serve(listener, app).await.unwrap();
     });
 
-    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into()).unwrap();
+    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into())
+        .unwrap()
+        .with_host_trust(
+            Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
+            "vox-host:test:bridge",
+            "test-host-secret",
+        );
     let context = CallContext {
         channel: "whatsapp".into(),
         external_identity: "+15551234567".into(),
@@ -276,7 +282,13 @@ async fn test_cannot_report_success_independently_when_core_is_unreachable() {
     let proposal_id = Uuid::new_v4();
 
     // Use a port where no server is listening
-    let client = CoreClient::new("http://127.0.0.1:59999".into(), "test-token".into()).unwrap();
+    let client = CoreClient::new("http://127.0.0.1:59999".into(), "test-token".into())
+        .unwrap()
+        .with_host_trust(
+            Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
+            "vox-host:test:bridge",
+            "test-host-secret",
+        );
     let context = CallContext {
         channel: "whatsapp".into(),
         external_identity: "+15551234567".into(),
@@ -343,7 +355,13 @@ async fn test_reconnect_and_status_command_fetches_authoritative_run_state() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into()).unwrap();
+    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into())
+        .unwrap()
+        .with_host_trust(
+            Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
+            "vox-host:test:bridge",
+            "test-host-secret",
+        );
     let context = CallContext {
         channel: "desktop".into(),
         external_identity: "user-host-123".into(),
@@ -396,7 +414,13 @@ async fn test_duplicate_decision_reports_duplicate_safely() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into()).unwrap();
+    let client = CoreClient::new(format!("http://127.0.0.1:{port}"), "test-token".into())
+        .unwrap()
+        .with_host_trust(
+            Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
+            "vox-host:test:bridge",
+            "test-host-secret",
+        );
     let context = CallContext {
         channel: "whatsapp".into(),
         external_identity: "+15551234567".into(),
