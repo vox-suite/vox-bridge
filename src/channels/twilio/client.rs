@@ -63,9 +63,11 @@ impl TelephonyClient for TwilioApiClient {
             .take(300)
             .collect();
         let twiml = format!(
-            r#"<Response><Connect><Stream url="{}"><Parameter name="action_id" value="{}" /><Parameter name="conversation_id" value="{}" /><Parameter name="opening_instruction" value="{}" /></Stream></Connect></Response>"#,
+            r#"<Response><Connect><Stream url="{}"><Parameter name="action_id" value="{}" /><Parameter name="conversation_id" value="{}" /><Parameter name="external_identity" value="{}" /><Parameter name="external_conversation_id" value="{}" /><Parameter name="opening_instruction" value="{}" /></Stream></Connect></Response>"#,
             self.stream_url,
             action_id,
+            conversation_id,
+            to,
             conversation_id,
             xml_escape(&opening),
         );
