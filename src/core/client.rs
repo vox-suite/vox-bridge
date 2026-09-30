@@ -714,13 +714,7 @@ impl ConversationClient for CoreClient {
         Ok(Box::pin(
             self.respond_events(context, transcript)
                 .await?
-                .filter_map(|item| async {
-                    match item {
-                        Ok(crate::core::ConversationEvent::Text(text)) => Some(Ok(text)),
-                        Ok(crate::core::ConversationEvent::LookupPending) => None,
-                        Err(err) => Some(Err(err)),
-                    }
-                }),
+                .map(|item| item.map(|crate::core::ConversationEvent::Text(text)| text)),
         ))
     }
 

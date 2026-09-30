@@ -75,6 +75,11 @@ the old credential after the rollout. Core resolves channel principals as
 number is intentionally not linked across channels without a later explicit
 identity-linking flow.
 
+Partial voice transcripts request bounded capability metadata warmup from Core.
+Core discards the results; final turns use normal governed tool discovery.
+Conversation streams contain text, error and terminal frames. No speculative
+account data or lookup-status event is injected into the response.
+
 Run `cargo test --locked`, strict Clippy, and a release build to verify locally.
 Tests use local network boundaries and do not call paid provider APIs. Local
 verification does not prove the binary is deployed or that a real phone call
