@@ -119,12 +119,18 @@ impl AssemblyAiStt {
 
         let mut url = format!(
             "{}?speech_model={}&encoding={}&sample_rate={}&mode=min_latency&min_turn_silence={}&max_turn_silence={}&voice_focus=near-field",
-            self.endpoint, self.model, self.encoding, self.sample_rate, self.min_turn_silence, self.max_turn_silence
+            self.endpoint,
+            self.model,
+            self.encoding,
+            self.sample_rate,
+            self.min_turn_silence,
+            self.max_turn_silence
         );
 
         if !self.word_boost.is_empty()
             && let Ok(boost_json) = serde_json::to_string(&self.word_boost)
-            && let Ok(encoded) = serde_urlencoded::to_string([("word_boost", &boost_json)]) {
+            && let Ok(encoded) = serde_urlencoded::to_string([("word_boost", &boost_json)])
+        {
             url.push('&');
             url.push_str(&encoded);
         }
@@ -265,7 +271,8 @@ impl SttProvider for AssemblyAiStt {
             .map_err(|_| provider_error("streaming connection failed"))?;
         let (sender, receiver) = socket.split();
 
-        let (batch_bytes, min_bytes) = if self.sample_rate == 16000 && self.encoding == "pcm_s16le" {
+        let (batch_bytes, min_bytes) = if self.sample_rate == 16000 && self.encoding == "pcm_s16le"
+        {
             (3200, 1600)
         } else {
             (ASSEMBLY_BATCH_BYTES, ASSEMBLY_MINIMUM_BYTES)
@@ -368,11 +375,14 @@ mod tests {
 
     #[test]
     fn test_parse_assemblyai_events() {
-        let turn_json = r#"{"type":"Turn","end_of_turn":true,"transcript":"Hey Vox schedule my meeting"}"#;
+        let turn_json =
+            r#"{"type":"Turn","end_of_turn":true,"transcript":"Hey Vox schedule my meeting"}"#;
         let event = parse_event(turn_json).unwrap();
         assert_eq!(
             event,
-            Some(SttEvent::FinalTranscript("Hey Vox schedule my meeting".into()))
+            Some(SttEvent::FinalTranscript(
+                "Hey Vox schedule my meeting".into()
+            ))
         );
 
         let partial_json = r#"{"type":"Turn","end_of_turn":false,"transcript":"Hey Vox"}"#;

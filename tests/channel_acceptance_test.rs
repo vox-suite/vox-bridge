@@ -562,17 +562,8 @@ fn test_no_paid_provider_calls_without_explicit_live_test_mode() {
         "By default, live paid provider tests must be disabled"
     );
 
-    // Verify helper respects environment override
-    // Safety: single-threaded check on local scope
-    unsafe {
-        std::env::set_var("VOX_LIVE_CHANNEL_TEST", "1");
-    }
-    assert!(is_live_channel_test_enabled());
-
-    unsafe {
-        std::env::remove_var("VOX_LIVE_CHANNEL_TEST");
-    }
-    assert!(!is_live_channel_test_enabled());
+    // Override parsing is covered by the pure configuration unit test.
+    // Mutating process environment here would race concurrent network tests.
 }
 
 // ==============================================================================

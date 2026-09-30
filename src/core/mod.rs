@@ -21,7 +21,6 @@ pub type ConversationEventStream =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConversationEvent {
     Text(String),
-    LookupPending,
 }
 
 pub type AgentEvent = ConversationEvent;

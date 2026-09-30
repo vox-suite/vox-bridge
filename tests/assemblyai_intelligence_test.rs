@@ -2,10 +2,8 @@
 * Integration and contract tests for AssemblyAI Word Boost and LeMUR Intelligence
 */
 use vox_bridge::providers::lemur::{ExtractedActionProposal, ExtractedSpan};
-use vox_bridge::providers::stt::assemblyai::{
-    AssemblyAiStt, AudioBatcher, parse_event,
-};
 use vox_bridge::providers::stt::SttEvent;
+use vox_bridge::providers::stt::assemblyai::{AssemblyAiStt, AudioBatcher, parse_event};
 
 #[test]
 fn test_assemblyai_word_boost_url_generation() {

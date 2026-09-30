@@ -307,17 +307,10 @@ async fn stream_response(
         let Some(event) = next else {
             break;
         };
-        let chunk = match event? {
-            ConversationEvent::LookupPending => {
-                continue;
-            }
-            ConversationEvent::Text(text) => {
-                if text.trim().is_empty() {
-                    continue;
-                }
-                text
-            }
-        };
+        let ConversationEvent::Text(chunk) = event?;
+        if chunk.trim().is_empty() {
+            continue;
+        }
         if first_token_at.is_none() && !chunk.trim().is_empty() {
             first_token_at = Some(std::time::Instant::now());
         }
