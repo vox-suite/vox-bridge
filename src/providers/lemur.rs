@@ -115,10 +115,11 @@ impl AssemblyAiLemur {
             });
         }
 
-        let result: LemurTaskApiResponse = response.json().await.map_err(|e| VoiceError::Provider {
-            provider: "assemblyai_lemur",
-            message: format!("Failed to parse LeMUR response: {e}"),
-        })?;
+        let result: LemurTaskApiResponse =
+            response.json().await.map_err(|e| VoiceError::Provider {
+                provider: "assemblyai_lemur",
+                message: format!("Failed to parse LeMUR response: {e}"),
+            })?;
 
         Ok(result.response)
     }
@@ -150,7 +151,9 @@ For each requested action, output a JSON array of objects with the following sch
 Return ONLY a valid JSON array. If no consequential actions are requested, return [].
 "#;
 
-        let raw = self.query_lemur(transcript, PROMPT, Some("Vox Core Action Extraction")).await?;
+        let raw = self
+            .query_lemur(transcript, PROMPT, Some("Vox Core Action Extraction"))
+            .await?;
         if raw.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -182,7 +185,9 @@ Output a JSON array of objects with this schema:
 Return ONLY a valid JSON array. If none, return [].
 "#;
 
-        let raw = self.query_lemur(transcript, PROMPT, Some("Vox Desktop Spans Extraction")).await?;
+        let raw = self
+            .query_lemur(transcript, PROMPT, Some("Vox Desktop Spans Extraction"))
+            .await?;
         if raw.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -197,7 +202,8 @@ Return ONLY a valid JSON array. If none, return [].
     /// Uses LeMUR to generate an authoritative conversation summary for audit logs.
     pub async fn summarize_call(&self, transcript: &str) -> Result<String, VoiceError> {
         const PROMPT: &str = "Provide a concise, factual 2-sentence summary of what the user and assistant discussed, agreed upon, or executed.";
-        self.query_lemur(transcript, PROMPT, Some("Vox Conversation Summary")).await
+        self.query_lemur(transcript, PROMPT, Some("Vox Conversation Summary"))
+            .await
     }
 }
 
@@ -208,7 +214,8 @@ fn clean_json_fences(raw: &str) -> &str {
             return inner.trim();
         }
     } else if let Some(stripped) = trimmed.strip_prefix("```")
-        && let Some(inner) = stripped.strip_suffix("```") {
+        && let Some(inner) = stripped.strip_suffix("```")
+    {
         return inner.trim();
     }
     trimmed
