@@ -12,18 +12,12 @@ incoming stream, finalized turns are sent to Vox Core, and
 the selected TTS provider streams the response back as μ-law audio at 8000 Hz without
 transcoding. Caller speech interrupts active playback.
 
-Set the required credentials in the local `.env` and in the deployed service
-environment:
-
-```dotenv
-TWILIO_AUTH_TOKEN=your-twilio-auth-token
-ASSEMBLYAI_API_KEY=your-assemblyai-api-key
-VOX_CORE_URL=http://core-api:3001
-VOX_CORE_HOST_CREDENTIAL_ID=replace-with-core-issued-credential-id
-VOX_CORE_HOST_AUDIENCE=vox-host:deployment:bridge
-VOX_CORE_HOST_SECRET=replace-with-core-issued-host-secret
-ELEVENLABS_API_KEY=your-elevenlabs-api-key
-```
+Every variable the bridge reads, with which are required and their defaults, is
+documented in `../vox-edge/.env.example`. Set the required ones in the local `.env`
+and in the deployed service environment: `VOX_AUTH_TOKEN`, `TWILIO_ACCOUNT_SID`,
+`TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `ASSEMBLYAI_API_KEY`,
+`VOX_HOST_CREDENTIAL_ID`, `VOX_HOST_AUDIENCE`, `VOX_HOST_SECRET`, and the key for the
+selected TTS provider.
 
 The default provider profile uses ElevenLabs TTS:
 
