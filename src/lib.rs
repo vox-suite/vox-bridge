@@ -17,7 +17,6 @@ pub mod agents {
     }
     pub mod tts {
         pub use crate::providers::tts::elevenlabs as elevenlabs_tts;
-        pub use crate::providers::tts::sarvam as sarvam_tts;
     }
 }
 

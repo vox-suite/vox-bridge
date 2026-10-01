@@ -7,7 +7,6 @@ use crate::core::client::CoreClient;
 use crate::providers::jev::JevClient;
 use crate::providers::stt::assemblyai::AssemblyAiStt;
 use crate::providers::tts::elevenlabs::{ElevenLabsSettings, ElevenLabsTts};
-use crate::providers::tts::sarvam::{SarvamSettings, SarvamTts};
 use crate::voice::config::{VoiceConfig, VoiceProfile};
 use crate::voice::provider::{AgentProvider, SttProvider, TtsProvider, VoiceError};
 
@@ -95,79 +94,31 @@ impl VoiceRuntime {
                 .with_host_trust_from_config(&host_config)?
                 .with_tts_provider(profile.tts.provider.clone()),
         );
-        let tts: Arc<dyn TtsProvider> = match profile.tts.provider.as_str() {
-            "sarvam" => {
-                let api_key = config
-                    .secrets
-                    .sarvam_api_key
-                    .ok_or_else(|| VoiceError::Configuration("SARVAM_API_KEY is missing".into()))?;
-                Arc::new(SarvamTts::new(
-                    http.clone(),
-                    api_key,
-                    "https://api.sarvam.ai".into(),
-                    SarvamSettings {
-                        model: profile.tts.model.clone(),
-                        language_code: profile.tts.language_code.clone(),
-                        speaker: profile.tts.speaker.clone(),
-                        pace: profile.tts.pace,
-                    },
-                ))
-            }
-            "elevenlabs" => {
-                let api_key = config.secrets.elevenlabs_api_key.as_ref().ok_or_else(|| {
-                    VoiceError::Configuration("ELEVENLABS_API_KEY is missing".into())
-                })?;
-                let endpoint = "https://api.elevenlabs.io".to_string();
-                let output_format = std::env::var("ELEVENLABS_OUTPUT_FORMAT")
-                    .unwrap_or_else(|_| "mp3_44100_128".to_string());
-                Arc::new(ElevenLabsTts::new(
-                    http.clone(),
-                    api_key.clone(),
-                    endpoint,
-                    ElevenLabsSettings {
-                        model: profile.tts.model.clone(),
-                        voice_id: profile.tts.speaker.clone(),
-                        output_format,
-                        voice_settings: None,
-                    },
-                ))
-            }
-            provider => {
-                return Err(VoiceError::Configuration(format!(
-                    "unsupported TTS provider {provider}"
-                )));
-            }
+        let output_format = std::env::var("ELEVENLABS_OUTPUT_FORMAT")
+            .unwrap_or_else(|_| "mp3_44100_128".to_string());
+        let endpoint = "https://api.elevenlabs.io".to_string();
+        let elevenlabs = |voice_id: String| -> Arc<dyn TtsProvider> {
+            Arc::new(ElevenLabsTts::new(
+                http.clone(),
+                config.secrets.elevenlabs_api_key.clone(),
+                endpoint.clone(),
+                ElevenLabsSettings {
+                    model: profile.tts.model.clone(),
+                    voice_id,
+                    output_format: output_format.clone(),
+                    voice_settings: None,
+                },
+            ))
         };
-
-        let filler_tts: Arc<dyn TtsProvider> = if profile.tts.provider == "elevenlabs" {
-            if let (Some(filler_voice_id), Some(api_key)) = (
-                config.secrets.elevenlabs_filler_voice_id.as_ref(),
-                config.secrets.elevenlabs_api_key.as_ref(),
-            ) {
-                let endpoint = "https://api.elevenlabs.io".to_string();
-                let output_format = std::env::var("ELEVENLABS_OUTPUT_FORMAT")
-                    .unwrap_or_else(|_| "mp3_44100_128".to_string());
-                Arc::new(ElevenLabsTts::new(
-                    http.clone(),
-                    api_key.clone(),
-                    endpoint,
-                    ElevenLabsSettings {
-                        model: profile.tts.model.clone(),
-                        voice_id: filler_voice_id.clone(),
-                        output_format,
-                        voice_settings: None,
-                    },
-                ))
-            } else {
-                tts.clone()
-            }
-        } else {
-            tts.clone()
+        let tts = elevenlabs(profile.tts.speaker.clone());
+        let filler_tts = match config.secrets.elevenlabs_filler_voice_id.clone() {
+            Some(filler_voice_id) => elevenlabs(filler_voice_id),
+            None => tts.clone(),
         };
 
         let jev = config
             .secrets
-            .typesafe_api_key
+            .jev_api_key
             .map(|key| Arc::new(JevClient::new(http, key)));
 
         Ok(Self {

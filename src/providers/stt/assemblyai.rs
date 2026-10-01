@@ -113,7 +113,7 @@ impl AssemblyAiStt {
             .all(|character| character.is_ascii_alphanumeric() || character == '-')
         {
             return Err(VoiceError::Configuration(
-                "ASSEMBLYAI_SPEECH_MODEL contains unsupported characters".into(),
+                "speech model contains unsupported characters".into(),
             ));
         }
 

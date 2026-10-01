@@ -5,7 +5,7 @@
 Inbound Twilio calls use a bidirectional Media Stream through a configurable
 voice pipeline:
 
-`Twilio -> AssemblyAI -> Vox Core -> (Sarvam | ElevenLabs) -> Twilio`
+`Twilio -> AssemblyAI -> Vox Core -> ElevenLabs -> Twilio`
 
 The Twilio adapter accepts μ-law audio at 8000 Hz. AssemblyAI transcribes the
 incoming stream, finalized turns are sent to Vox Core, and
@@ -16,30 +16,13 @@ Every variable the bridge reads, with which are required and their defaults, is
 documented in `../vox-edge/.env.example`. Set the required ones in the local `.env`
 and in the deployed service environment: `VOX_AUTH_TOKEN`, `TWILIO_ACCOUNT_SID`,
 `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `ASSEMBLYAI_API_KEY`,
-`VOX_HOST_CREDENTIAL_ID`, `VOX_HOST_AUDIENCE`, `VOX_HOST_SECRET`, and the key for the
-selected TTS provider.
+`VOX_HOST_CREDENTIAL_ID`, `VOX_HOST_AUDIENCE`, `VOX_HOST_SECRET` and `ELEVENLABS_API_KEY`.
 
-The default provider profile uses ElevenLabs TTS:
-
-```dotenv
-VOX_STT_PROVIDER=assemblyai
-ASSEMBLYAI_SPEECH_MODEL=universal-3-5-pro
-VOX_TTS_PROVIDER=elevenlabs
-ELEVENLABS_MODEL_ID=eleven_v4_turbo
-ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
-```
-
-To use Sarvam for text-to-speech:
-
-```dotenv
-VOX_TTS_PROVIDER=sarvam
-SARVAM_API_KEY=your-sarvam-api-key
-```
-
-Sarvam model, speaker, language, and pace are fixed in code (`bulbul:v3`, `shubh`, `en-IN`, `1.0`).
-Provider choices are represented independently.
-The current build registers implementations for each stage and rejects
-unsupported provider names during startup.
+Speech uses AssemblyAI (`universal-3-5-pro`) for transcription and ElevenLabs
+(`eleven_v4_turbo`) for text-to-speech. The models are fixed in code; only the keys
+and optional voice IDs are configured (see the env reference above). The provider
+stages are still registered independently, so an additional provider can be added in
+`voice/registry.rs`.
 
 Configure Twilio Voice to send incoming call webhooks to:
 
@@ -88,6 +71,6 @@ Variables:
 - `VOX_CORE_URL`: `http://vox-core-api.railway.internal:<core PORT>`
 - `VOX_AUTH_TOKEN`: the same value as on `vox-core-api` and `vox-core-worker`
 - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
-- `ASSEMBLYAI_API_KEY`, `SARVAM_API_KEY`, `VOX_STT_PROVIDER`, `VOX_TTS_PROVIDER`
+- `ASSEMBLYAI_API_KEY`, `ELEVENLABS_API_KEY`
 
 Only the edge (`vox-edge`) has a public domain. It routes `/bridge/*` here, so Twilio and WhatsApp webhooks point at `https://api.voxagent.in/bridge/...`. The service also exposes `/health/live`, `/health/ready` and `/internal/v1/**`, none of which the edge forwards. See `vox-edge/ROUTING.md`.

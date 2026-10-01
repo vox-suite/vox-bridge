@@ -34,17 +34,3 @@ fn validates_missing_required_credentials() {
     let err = VoiceConfig::from_values(|k| values.get(k).cloned()).unwrap_err();
     assert!(err.to_string().contains("is missing"));
 }
-
-#[test]
-fn supports_sarvam_tts_configuration() {
-    let mut values = valid_values();
-    values.insert("VOX_TTS_PROVIDER".into(), "sarvam".into());
-    values.insert("SARVAM_API_KEY".into(), "sarvam-key".into());
-
-    let config = VoiceConfig::from_values(|k| values.get(k).cloned()).unwrap();
-    assert_eq!(config.profile.tts.provider, "sarvam");
-    assert_eq!(config.profile.tts.model, "bulbul:v3");
-    assert_eq!(config.profile.tts.speaker, "shubh");
-    assert_eq!(config.profile.tts.language_code, "en-IN");
-    assert_eq!(config.profile.tts.pace, 1.0);
-}
