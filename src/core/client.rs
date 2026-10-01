@@ -655,10 +655,24 @@ impl ConversationClient for CoreClient {
 
         match send_result {
             Ok(response) if response.status().is_success() => {
+                let header_ms = |name: &str| {
+                    response
+                        .headers()
+                        .get(name)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.parse::<u128>().ok())
+                };
+                let connect_time_ms = start_time.elapsed().as_millis();
+                let server_prepare_ms = header_ms("x-vox-prepare-ms");
                 tracing::info!(
                     conversation_id = %context.external_conversation_id,
+                    turn_id = ?context.turn_id,
+                    prompt_len = transcript.len(),
                     endpoint = %stream_endpoint,
-                    connect_time_ms = start_time.elapsed().as_millis(),
+                    connect_time_ms,
+                    server_prepare_ms = ?server_prepare_ms,
+                    server_context_ms = ?header_ms("x-vox-context-ms"),
+                    network_overhead_ms = ?server_prepare_ms.map(|s| connect_time_ms.saturating_sub(s)),
                     "CoreClient: Stream connection established"
                 );
                 let stream = response.bytes_stream();

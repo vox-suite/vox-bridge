@@ -313,6 +313,14 @@ async fn stream_response(
         }
         if first_token_at.is_none() && !chunk.trim().is_empty() {
             first_token_at = Some(std::time::Instant::now());
+            tracing::info!(
+                turn = number,
+                conversation_id = %context.external_conversation_id,
+                turn_id = ?context.turn_id,
+                stage = "first_token",
+                since_request_ms = llm_request_start.elapsed().as_millis(),
+                "VOICE_MILESTONE"
+            );
         }
         full_response.push_str(&chunk);
 
@@ -332,6 +340,15 @@ async fn stream_response(
             if sentence_count == 1 || first_sentence_at.is_none() {
                 first_sentence_at = Some(std::time::Instant::now());
                 first_sentence_text = Some(trimmed.to_string());
+                tracing::info!(
+                    turn = number,
+                    conversation_id = %context.external_conversation_id,
+                    turn_id = ?context.turn_id,
+                    stage = "first_sentence",
+                    since_request_ms = llm_request_start.elapsed().as_millis(),
+                    sentence_chars = trimmed.len(),
+                    "VOICE_MILESTONE"
+                );
             }
             spoken_tx
                 .send(Spoken::Sentence(trimmed.to_string()))
@@ -477,6 +494,12 @@ async fn play_sentence(
         let now = std::time::Instant::now();
         if is_first_chunk {
             ttfb_ms = now.duration_since(tts_start).as_millis();
+            tracing::info!(
+                stage = "tts_first_audio",
+                tts_ttfb_ms = ttfb_ms,
+                sentence_chars = text.len(),
+                "VOICE_MILESTONE"
+            );
             if first_audio_tracker.is_none() {
                 *first_audio_tracker = Some(now);
             }
