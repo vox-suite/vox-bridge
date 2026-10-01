@@ -8,7 +8,6 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::channels::desktop::{create_desktop_session, desktop_stream_handler};
 use crate::channels::notifications::{handle_notification_dispatch, handle_opt_in, handle_opt_out};
 use crate::channels::outbound::handle_outbound_call;
 use crate::channels::twilio::{handle_voice_status, initialize_voice_socket, voice_stream_handler};
@@ -24,11 +23,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/bridge/twilio/voice", post(initialize_voice_socket))
         .route("/bridge/twilio/voice/stream", get(voice_stream_handler))
         .route("/bridge/twilio/voice/status", post(handle_voice_status))
-        .route(
-            "/bridge/desktop/voice/session",
-            post(create_desktop_session),
-        )
-        .route("/bridge/desktop/voice/stream", get(desktop_stream_handler))
         .route(
             "/internal/v1/actions/outbound-call",
             post(handle_outbound_call),

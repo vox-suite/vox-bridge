@@ -1,5 +1,5 @@
 /**
- * Channel Acceptance Suite for Voice, Messaging, and Desktop Channels (E49 / vox-bridge#4).
+ * Channel Acceptance Suite for Voice and Messaging Channels (E49 / vox-bridge#4).
  *
  * Verifies Platform V1 criteria:
  * 1. Realistic channel tests cover authentication failure, interruption, reconnect, notification, and unknown outcome.
@@ -95,7 +95,6 @@ fn setup_test_app() -> (Arc<AppState>, axum::Router) {
         whatsapp_app_secret: Some("mock-app-secret".into()),
         whatsapp_access_token: Some("mock-access-token".into()),
         whatsapp_phone_id: Some("100200300".into()),
-        desktop_sessions: Arc::new(DashMap::new()),
         opt_outs: Arc::new(DashMap::new()),
         notification_deliveries: Arc::new(DashMap::new()),
         messaging_client: Some(Arc::new(MockMessaging {
@@ -167,27 +166,6 @@ async fn test_channel_auth_failure_voice_and_messaging_fails_closed() {
         wa_res.status(),
         StatusCode::FORBIDDEN,
         "WhatsApp webhook without valid X-Hub-Signature-256 must return 403 Forbidden"
-    );
-
-    // 3. Desktop Session: Missing or invalid Bearer token fails closed (401)
-    let desktop_req = Request::builder()
-        .method("POST")
-        .uri("/bridge/desktop/voice/session")
-        .header("Content-Type", "application/json")
-        .header("Authorization", "Bearer wrong-desktop-token")
-        .body(Body::from(
-            json!({
-                "host_user_id": "user-42"
-            })
-            .to_string(),
-        ))
-        .unwrap();
-
-    let desktop_res = router.clone().oneshot(desktop_req).await.unwrap();
-    assert_eq!(
-        desktop_res.status(),
-        StatusCode::UNAUTHORIZED,
-        "Desktop session initiation with invalid token must return 401 Unauthorized"
     );
 
     // 4. Sender Identity Mismatch: Unauthorized sender trying to approve proposal is blocked

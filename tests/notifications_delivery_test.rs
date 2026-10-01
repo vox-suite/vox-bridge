@@ -182,7 +182,6 @@ fn create_test_state(
         whatsapp_app_secret: Some("secret_test".into()),
         whatsapp_access_token: Some("wa_token".into()),
         whatsapp_phone_id: Some("12345678".into()),
-        desktop_sessions: Arc::new(DashMap::new()),
         opt_outs: Arc::new(DashMap::new()),
         notification_deliveries: Arc::new(DashMap::new()),
         messaging_client: messaging,

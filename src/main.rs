@@ -64,7 +64,6 @@ async fn main() {
     let whatsapp_app_secret = std::env::var("META_APP_SECRET").ok();
     let whatsapp_access_token = std::env::var("WHATSAPP_ACCESS_KEY").ok();
     let whatsapp_phone_id = std::env::var("WHATSAPP_PHONE_ID").ok();
-    let desktop_sessions = Arc::new(DashMap::new());
     let opt_outs = Arc::new(DashMap::new());
     let notification_deliveries = Arc::new(DashMap::new());
 
@@ -82,7 +81,6 @@ async fn main() {
         whatsapp_app_secret,
         whatsapp_access_token,
         whatsapp_phone_id,
-        desktop_sessions,
         opt_outs,
         notification_deliveries,
         messaging_client: None,

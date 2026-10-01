@@ -46,7 +46,6 @@ async fn health_check_returns_ok() {
         whatsapp_app_secret: None,
         whatsapp_access_token: None,
         whatsapp_phone_id: None,
-        desktop_sessions: Arc::new(DashMap::new()),
         opt_outs: Arc::new(DashMap::new()),
         notification_deliveries: Arc::new(DashMap::new()),
         messaging_client: None,

@@ -23,7 +23,7 @@ use crate::voice::turn::{DraftTurn, is_backchannel};
 const MAX_STT_RECONNECTS: u32 = 3;
 
 /// A spawned voice session together with the channels used to drive it.
-/// Shared by every channel (Twilio, desktop, ...) that bridges a transport
+/// Shared by every channel (Twilio) that bridges a transport
 /// socket onto `run_voice_session_with_playback`.
 pub struct VoiceSessionHandle {
     pub playback: Arc<PlaybackState>,
