@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::channels::notifications::{handle_notification_dispatch, handle_opt_in, handle_opt_out};
 use crate::channels::outbound::handle_outbound_call;
 use crate::channels::twilio::{handle_voice_status, initialize_voice_socket, voice_stream_handler};
+use crate::channels::verification::handle_verification_code;
 use crate::channels::whatsapp::{wa_receive, wa_verify};
 use crate::state::AppState;
 
@@ -26,6 +27,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/internal/v1/actions/outbound-call",
             post(handle_outbound_call),
+        )
+        .route(
+            "/internal/v1/verification/code",
+            post(handle_verification_code),
         )
         .route(
             "/internal/v1/notifications/dispatch",

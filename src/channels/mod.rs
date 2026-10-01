@@ -6,6 +6,7 @@ pub mod interaction;
 pub mod notifications;
 pub mod outbound;
 pub mod twilio;
+pub mod verification;
 pub mod whatsapp;
 
 /// Helper to determine if live paid provider tests are explicitly enabled.
