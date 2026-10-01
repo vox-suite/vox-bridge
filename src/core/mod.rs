@@ -54,10 +54,6 @@ pub trait ConversationClient: Send + Sync {
         ))
     }
 
-    async fn speculate(&self, _context: &CallContext, _transcript: &str) -> Result<(), VoiceError> {
-        Ok(())
-    }
-
     async fn complete(&self, _context: &CallContext) -> Result<(), VoiceError> {
         Ok(())
     }

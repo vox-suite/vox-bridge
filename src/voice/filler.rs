@@ -138,15 +138,6 @@ pub fn filler_for_choice_index(choice: &str, idx: usize) -> &'static str {
     }
 }
 
-pub fn filler_for_choice(choice: &str) -> &'static str {
-    filler_for_choice_index(choice, 0)
-}
-
-pub fn rotate_filler_for_choice(choice: &str) -> &'static str {
-    let idx = FILLER_ROTATION.fetch_add(1, Ordering::Relaxed);
-    filler_for_choice_index(choice, idx)
-}
-
 pub fn rotate_filler_for_choice_and_tone(choice: &str, tone: &str) -> &'static str {
     let idx = FILLER_ROTATION.fetch_add(1, Ordering::Relaxed);
     match (choice, tone) {

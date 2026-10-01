@@ -12,8 +12,7 @@ use crate::channels::context::CallContext;
 use crate::core::protocol::{
     ApproveRequestBody, CompleteRequest, ContextRequest, CreateProposalRequest, DurableTask,
     HostContextRequest, IdentityPayload, Proposal, ProposeRequestBody, RespondRequest,
-    RespondResponse, SpeculateRequest, StartTaskRequest, StartTaskRequestBody, WaitRequest,
-    WaitRequestBody,
+    RespondResponse, StartTaskRequest, StartTaskRequestBody, WaitRequest, WaitRequestBody,
 };
 use crate::core::sse::parse_sse_stream;
 use crate::core::{ConversationClient, ConversationEventStream, TextStream};
@@ -730,50 +729,6 @@ impl ConversationClient for CoreClient {
                 .await?
                 .map(|item| item.map(|crate::core::ConversationEvent::Text(text)| text)),
         ))
-    }
-
-    async fn speculate(&self, context: &CallContext, transcript: &str) -> Result<(), VoiceError> {
-        let payload = SpeculateRequest {
-            host_context: HostContextRequest {
-                host_user_id: context.external_identity.clone(),
-                organization_external_key: None,
-            },
-            agent_external_key: &self.agent_external_key,
-            identity: IdentityPayload {
-                channel: &context.channel,
-                external_id: &context.external_identity,
-            },
-            external_conversation_id: &context.external_conversation_id,
-            text: transcript,
-            turn_id: context.turn_id.as_deref(),
-            revision: context.revision,
-            tts_provider: context
-                .tts_provider
-                .as_deref()
-                .or(self.tts_provider.as_deref()),
-        };
-        let response = self
-            .prepare_request(
-                self.client
-                    .post(format!("{}/v1/conversations/speculate", self.base_url)),
-                &context.external_identity,
-                None,
-            )?
-            .timeout(Duration::from_secs(6))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|_| VoiceError::Provider {
-                provider: "core",
-                message: "Core speculation failed".into(),
-            })?;
-        if !response.status().is_success() {
-            return Err(VoiceError::Provider {
-                provider: "core",
-                message: "Core speculation unavailable".into(),
-            });
-        }
-        Ok(())
     }
 
     async fn complete(&self, context: &CallContext) -> Result<(), VoiceError> {

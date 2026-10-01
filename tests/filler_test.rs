@@ -1,9 +1,7 @@
 /**
 * this file code contains tests for filler acknowledgment stripping and caching
 */
-use vox_bridge::voice::filler::{
-    filler_for_choice, is_conversational_pleasantry, rotate_filler_for_choice, strip_leading_ack,
-};
+use vox_bridge::voice::filler::{is_conversational_pleasantry, strip_leading_ack};
 
 #[test]
 fn strips_various_acknowledgment_prefixes() {
@@ -43,41 +41,6 @@ fn ignores_brackets_at_start() {
         strip_leading_ack("[greeting] Sure, hello there."),
         "hello there."
     );
-}
-
-#[test]
-fn maps_jev_choices_to_prewarmed_filler_phrases() {
-    assert_eq!(
-        filler_for_choice("check_order"),
-        "Let me check on your order."
-    );
-    assert_eq!(
-        filler_for_choice("check_account"),
-        "Let me look up your account details."
-    );
-    assert_eq!(
-        filler_for_choice("check_inventory"),
-        "Let me check the latest availability for you."
-    );
-    assert_eq!(
-        filler_for_choice("give_me_a_moment"),
-        "Give me just a moment to pull that together."
-    );
-    assert_eq!(
-        filler_for_choice("unknown_choice"),
-        "I'm looking into that."
-    );
-    assert_eq!(filler_for_choice("pleasantry"), "");
-    assert_eq!(filler_for_choice("gratitude"), "");
-}
-
-#[test]
-fn rotates_fillers_for_same_category() {
-    let first = rotate_filler_for_choice("give_me_a_moment");
-    let second = rotate_filler_for_choice("give_me_a_moment");
-    assert!(!first.is_empty());
-    assert!(!second.is_empty());
-    assert_ne!(first, second);
 }
 
 #[test]

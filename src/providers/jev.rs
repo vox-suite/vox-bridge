@@ -62,11 +62,6 @@ impl JevClient {
         Ok(parsed)
     }
 
-    pub async fn choose_filler(&self, transcript: &str) -> Result<String, VoiceError> {
-        let (choice, _) = self.choose_filler_and_tone(transcript).await?;
-        Ok(choice)
-    }
-
     pub async fn choose_filler_and_tone(
         &self,
         transcript: &str,

@@ -4,14 +4,13 @@
 pub mod mod_types;
 pub mod playback;
 pub mod response;
-pub mod speculation;
 
 pub use mod_types::{CallCommand, CallEvent, SessionSignal};
 pub use playback::PlaybackState;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::channels::context::CallContext;
@@ -19,7 +18,6 @@ use crate::providers::stt::SttEvent;
 use crate::voice::metrics::TurnTiming;
 use crate::voice::provider::{VoiceError, VoiceProviders};
 use crate::voice::session::response::spawn_response;
-use crate::voice::session::speculation::spawn_speculation_watcher;
 use crate::voice::turn::{DraftTurn, is_backchannel};
 
 const MAX_STT_RECONNECTS: u32 = 3;
@@ -99,8 +97,6 @@ pub async fn run_voice_session_with_playback(
     let stt_connect = providers.stt.connect();
 
     let (signal_tx, mut signal_rx) = mpsc::channel(64);
-    let (speculation_tx, speculation_rx) = watch::channel(None);
-    let _speculation_watcher = spawn_speculation_watcher(speculation_rx, providers.agent.clone());
 
     let audio_playing = Arc::new(AtomicBool::new(false));
     let answer_started = Arc::new(AtomicBool::new(false));
@@ -217,12 +213,7 @@ pub async fn run_voice_session_with_playback(
                             }
                         }
 
-                        if draft.partial(&text) && draft.snapshot().split_whitespace().count() >= 3 {
-                            let mut ctx = context.clone();
-                            ctx.turn_id = Some(draft.id.clone());
-                            ctx.revision = Some(draft.revision);
-                            let _ = speculation_tx.send(Some((ctx, draft.snapshot())));
-                        }
+                        draft.partial(&text);
                         settle_at = None;
                     }
                     Ok(Some(SttEvent::FinalTranscript(text))) => {
@@ -276,10 +267,6 @@ pub async fn run_voice_session_with_playback(
                             });
                             completeness_rx = Some(rx);
                         }
-                        let mut ctx = context.clone();
-                        ctx.turn_id = Some(draft.id.clone());
-                        ctx.revision = Some(draft.revision);
-                        let _ = speculation_tx.send(Some((ctx, draft.snapshot())));
                     }
                     // The STT stream ended or failed: reconnect instead of spinning
                     // on a dead socket, and give up after a few attempts.

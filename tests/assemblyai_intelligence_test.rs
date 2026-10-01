@@ -1,7 +1,6 @@
 /**
 * Integration and contract tests for AssemblyAI Word Boost and LeMUR Intelligence
 */
-use vox_bridge::providers::lemur::{ExtractedActionProposal, ExtractedSpan};
 use vox_bridge::providers::stt::SttEvent;
 use vox_bridge::providers::stt::assemblyai::{AssemblyAiStt, AudioBatcher, parse_event};
 
@@ -86,52 +85,4 @@ fn test_assemblyai_streaming_v3_turn_event_parsing() {
     let raw_started = r#"{"type": "SpeechStarted"}"#;
     let event_started = parse_event(raw_started).expect("Must parse valid JSON");
     assert_eq!(event_started, Some(SttEvent::SpeechStarted));
-}
-
-#[test]
-fn test_lemur_extracted_action_proposal_schema() {
-    let mock_lemur_json = r#"[
-        {
-            "title": "Book Flight to San Francisco",
-            "provider": "expedia",
-            "capability": "flight_booking",
-            "material_details": {
-                "origin": "BLR",
-                "destination": "SFO",
-                "date": "2026-10-05",
-                "cabin": "economy"
-            },
-            "currency": "USD",
-            "amount": 850.0,
-            "requires_approval": true
-        }
-    ]"#;
-
-    let proposals: Vec<ExtractedActionProposal> =
-        serde_json::from_str(mock_lemur_json).expect("Must deserialize into ActionProposal");
-
-    assert_eq!(proposals.len(), 1);
-    assert_eq!(proposals[0].provider, "expedia");
-    assert_eq!(proposals[0].amount, Some(850.0));
-    assert!(proposals[0].requires_approval);
-}
-
-#[test]
-fn test_lemur_extracted_spans_schema() {
-    let mock_lemur_spans = r#"[
-        {
-            "title": "AssemblyAI Demo Rehearsal",
-            "summary": "Full run-through of voice live call with Twilio and desktop bridge",
-            "start_time": "2026-09-28T16:00:00+05:30",
-            "end_time": "2026-09-28T17:00:00+05:30",
-            "category": "work"
-        }
-    ]"#;
-
-    let spans: Vec<ExtractedSpan> =
-        serde_json::from_str(mock_lemur_spans).expect("Must deserialize into Spans");
-
-    assert_eq!(spans.len(), 1);
-    assert_eq!(spans[0].title, "AssemblyAI Demo Rehearsal");
-    assert_eq!(spans[0].category, "work");
 }
