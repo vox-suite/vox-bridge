@@ -13,8 +13,8 @@ use crate::channels::context::normalized_e164;
 use crate::channels::twilio::signature::validate_twilio_signature;
 use crate::state::AppState;
 
-pub const VOICE_WEBHOOK_URL: &str = "https://api.voxagent.in/bridge/twilio/voice";
-pub const VOICE_STREAM_URL: &str = "wss://api.voxagent.in/bridge/twilio/voice/stream";
+pub const VOICE_WEBHOOK_URL: &str = "https://api.callvox.in/bridge/twilio/voice";
+pub const VOICE_STREAM_URL: &str = "wss://api.callvox.in/bridge/twilio/voice/stream";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct TwilioState {

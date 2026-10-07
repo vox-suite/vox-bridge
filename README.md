@@ -26,11 +26,11 @@ stages are still registered independently, so an additional provider can be adde
 
 Configure Twilio Voice to send incoming call webhooks to:
 
-`POST https://api.voxagent.in/bridge/twilio/voice`
+`POST https://api.callvox.in/bridge/twilio/voice`
 
 The returned TwiML connects Twilio to:
 
-`wss://api.voxagent.in/bridge/twilio/voice/stream`
+`wss://api.callvox.in/bridge/twilio/voice/stream`
 
 Both requests validate `X-Twilio-Signature` before a call session is accepted.
 
@@ -73,4 +73,4 @@ Variables:
 - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
 - `ASSEMBLYAI_API_KEY`, `ELEVENLABS_API_KEY`
 
-Only the edge (`vox-edge`) has a public domain. It routes `/bridge/*` here, so Twilio and WhatsApp webhooks point at `https://api.voxagent.in/bridge/...`. The service also exposes `/health/live`, `/health/ready` and `/internal/v1/**`, none of which the edge forwards. See `vox-edge/ROUTING.md`.
+Only the edge (`vox-edge`) has a public domain. It routes `/bridge/*` here, so Twilio and WhatsApp webhooks point at `https://api.callvox.in/bridge/...`. The service also exposes `/health/live`, `/health/ready` and `/internal/v1/**`, none of which the edge forwards. See `vox-edge/ROUTING.md`.

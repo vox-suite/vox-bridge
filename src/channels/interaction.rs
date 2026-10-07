@@ -229,7 +229,7 @@ impl UncertaintyNarrator {
             "Unconfirmed Outcome: We could not verify the outcome of {action_description} \
             due to a provider communication issue ({error_message}). \
             The authoritative run state remains unconfirmed. No action was assumed completed. \
-            Please check your dashboard at app.voxagent.in or query status again shortly."
+            Please check your dashboard at app.callvox.si or query status again shortly."
         )
     }
 

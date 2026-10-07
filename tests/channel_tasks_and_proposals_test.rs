@@ -180,7 +180,7 @@ fn test_uncertainty_narrator_emits_unconfirmed_and_partial_outcomes() {
     assert!(unconfirmed.contains("Unconfirmed Outcome"));
     assert!(unconfirmed.contains("authoritative run state remains unconfirmed"));
     assert!(unconfirmed.contains("No action was assumed completed"));
-    assert!(unconfirmed.contains("app.voxagent.in"));
+    assert!(unconfirmed.contains("app.callvox.si"));
 
     let partial = UncertaintyNarrator::partial_success(
         "flight and hotel booking",

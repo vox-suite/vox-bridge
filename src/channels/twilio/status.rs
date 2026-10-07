@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::channels::twilio::signature::validate_twilio_signature;
 use crate::state::AppState;
 
-pub const VOICE_STATUS_URL: &str = "https://api.voxagent.in/bridge/twilio/voice/status";
+pub const VOICE_STATUS_URL: &str = "https://api.callvox.in/bridge/twilio/voice/status";
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
