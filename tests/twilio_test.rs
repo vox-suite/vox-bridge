@@ -83,25 +83,23 @@ fn signed_callbacks_require_the_configured_callvox_origin() {
     ] {
         let canonical = format!("{scheme}://api.callvox.in/{path}");
         let params = vec![("CallSid".into(), "CA-migration-test".into())];
-        for host in ["api.callvox.in"] {
-            let signature = compute_twilio_signature(
-                "test-secret",
-                &format!("{scheme}://{host}/{path}"),
-                &params,
-            );
-            assert!(validate_twilio_signature(
-                "test-secret",
-                &canonical,
-                &params,
-                &signature
-            ));
-            assert!(!validate_twilio_signature(
-                "wrong-secret",
-                &canonical,
-                &params,
-                &signature
-            ));
-        }
+        let signature = compute_twilio_signature(
+            "test-secret",
+            &format!("{scheme}://api.callvox.in/{path}"),
+            &params,
+        );
+        assert!(validate_twilio_signature(
+            "test-secret",
+            &canonical,
+            &params,
+            &signature
+        ));
+        assert!(!validate_twilio_signature(
+            "wrong-secret",
+            &canonical,
+            &params,
+            &signature
+        ));
         for url in [
             format!("{scheme}://retired.example/{path}"),
             format!("{scheme}://attacker.example/{path}"),
