@@ -21,6 +21,9 @@ pub enum SttEvent {
 #[async_trait]
 pub trait SttSession: Send + Sync {
     async fn send_audio(&self, audio: Bytes) -> Result<(), VoiceError>;
+    async fn force_endpoint(&self) -> Result<(), VoiceError> {
+        Ok(())
+    }
     async fn next_event(&self) -> Result<Option<SttEvent>, VoiceError>;
     async fn finish(&self) -> Result<(), VoiceError>;
 }

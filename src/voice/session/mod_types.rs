@@ -24,6 +24,7 @@ impl AudioKind {
 #[derive(Debug, PartialEq, Eq)]
 pub enum CallEvent {
     Audio(Bytes),
+    Text(String),
     PlaybackFinished(String),
     Stop,
 }

@@ -30,6 +30,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 unicode-segmentation = "1.13"
 minimp3 = { version = "0.6.1", features = ["async_tokio"] }
 tokio-util = { version = "0.7", features = ["io"] }
+earshot = "=1.2.2"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

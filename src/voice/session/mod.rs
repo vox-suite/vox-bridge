@@ -1,6 +1,7 @@
 /**
 * this file code contains voice session orchestrator and event loop
 */
+pub(crate) mod input;
 pub mod mod_types;
 pub mod playback;
 pub mod response;
@@ -112,7 +113,8 @@ pub async fn run_voice_session_with_playback(
     let mut dispatched: Option<(DraftTurn, TurnTiming)> = None;
 
     let mut speech_started_at: Option<std::time::Instant> = None;
-    let mut last_voiced_audio_at: Option<std::time::Instant> = None;
+    let mut last_voiced_audio_at = None;
+    let mut activity = crate::voice::audio::voice_activity::VoiceActivity::default();
     let mut completeness_rx: Option<mpsc::Receiver<f64>> = None;
     let mut settle_origin: Option<tokio::time::Instant> = None;
 
@@ -166,6 +168,7 @@ pub async fn run_voice_session_with_playback(
         "VOICE_STT_CONNECTED"
     );
     let mut stt_reconnects = 0u32;
+    let mut stt_pending = false;
 
     loop {
         tokio::select! {
@@ -173,17 +176,41 @@ pub async fn run_voice_session_with_playback(
                 match event {
                     Some(CallEvent::Audio(bytes)) => {
                         report.input_frames += 1; report.input_bytes += bytes.len() as u64;
-                        if crate::voice::audio::levels::has_voice_energy(&bytes) {
-                            last_voiced_audio_at = Some(std::time::Instant::now());
+                        let detected = activity.push_mulaw(&bytes);
+                        if detected.voiced { last_voiced_audio_at = Some(std::time::Instant::now()); }
+                        if detected.started {
+                            stt_pending = true;
+                            speech_started_at = Some(std::time::Instant::now());
+                            settle_at = None;
+                            tracing::info!(detector = "earshot", "VOICE_SPEECH_STARTED");
                         }
                         let send_started = std::time::Instant::now();
                         if let Err(err) = stt.send_audio(bytes).await {
                             report.stt_errors += 1;
                             tracing::warn!(error_kind = err.kind(), "VOICE_STT_SEND_FAILED");
                         }
+                        if detected.ended && stt_pending {
+                            tracing::info!(detector = "earshot", endpoint_silence_ms = 640, "VOICE_AUDIO_ENDPOINT");
+                            if let Err(err) = stt.force_endpoint().await {
+                                report.stt_errors += 1;
+                                tracing::warn!(error_kind = err.kind(), "VOICE_STT_ENDPOINT_FAILED");
+                            }
+                        }
                         if send_started.elapsed().as_millis() > 100 {
                             tracing::warn!(send_ms = send_started.elapsed().as_millis() as u64, "VOICE_STT_SEND_STALLED");
                         }
+                    }
+                    Some(CallEvent::Text(text)) => {
+                        if let Some(task) = active_response.take() { task.abort(); let _ = task.await; }
+                        playback.invalidate();
+                        audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
+                        output.send(CallCommand::Clear).await.map_err(|_| VoiceError::Protocol("output closed".into()))?;
+                        draft = DraftTurn::default();
+                        draft.finish(&text);
+                        settle_origin = None;
+                        completeness_rx = None;
+                        draft_timing = None;
+                        settle_at = Some(tokio::time::Instant::now());
                     }
                     Some(CallEvent::PlaybackFinished(name)) => {
                         if name == format!("filler-{response_number}")
@@ -208,10 +235,10 @@ pub async fn run_voice_session_with_playback(
                 }
                 match stt_event {
                     Ok(Some(SttEvent::SpeechStarted)) => {
-                        speech_started_at.get_or_insert_with(std::time::Instant::now);
-                        settle_at = None;
+                        stt_pending = true;
                     }
                     Ok(Some(SttEvent::PartialTranscript(text))) => {
+                        stt_pending = true;
                         report.partials += 1;
                         let assistant_active = audio_playing.load(std::sync::atomic::Ordering::SeqCst)
                             || active_response.is_some();
@@ -251,6 +278,7 @@ pub async fn run_voice_session_with_playback(
                         settle_at = None;
                     }
                     Ok(Some(SttEvent::FinalTranscript(text))) => {
+                        stt_pending = false;
                         report.finals += 1;
                         if text.trim().is_empty() {
                             continue;
@@ -288,10 +316,10 @@ pub async fn run_voice_session_with_playback(
                             transcript_received_at: now,
                             last_transcript_received_at: now,
                         });
-                        timing.last_voiced_audio_at = last_voiced_audio_at;
                         timing.last_transcript_received_at = now;
+                        timing.last_voiced_audio_at = last_voiced_audio_at;
                         draft.finish(&text);
-                        tracing::info!(turn_id = %draft.id, revision = draft.revision, transcript_bytes = text.len(), speech_to_final_ms = last_voiced_audio_at.and_then(|at| now.checked_duration_since(at)).map(|d| d.as_millis() as u64), "VOICE_STT_FINAL");
+                        tracing::info!(turn_id = %draft.id, revision = draft.revision, transcript_bytes = text.len(), speech_to_final_ms = last_voiced_audio_at.map(|at| now.saturating_duration_since(at).as_millis() as u64), "VOICE_STT_FINAL");
                         let origin = tokio::time::Instant::now();
                         settle_origin = Some(origin);
                         settle_at = Some(origin + draft.settle_delay());
@@ -347,6 +375,10 @@ pub async fn run_voice_session_with_playback(
                     None => std::future::pending::<()>().await,
                 }
             } => {
+                if activity.is_active() {
+                    settle_at = Some(tokio::time::Instant::now() + std::time::Duration::from_millis(50));
+                    continue;
+                }
                 settle_at = None;
                 settle_origin = None;
                 completeness_rx = None;

@@ -20,6 +20,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(index_handler))
         .route("/health/live", get(health_handler))
         .route("/health/ready", get(health_handler))
+        .route(
+            "/bridge/desktop/voice",
+            get(crate::channels::desktop::stream::handler),
+        )
         .route("/bridge/wa", get(wa_verify).post(wa_receive))
         .route("/bridge/twilio/voice", post(initialize_voice_socket))
         .route("/bridge/twilio/voice/stream", get(voice_stream_handler))

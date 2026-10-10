@@ -3,4 +3,4 @@
 */
 pub mod mp3;
 
-pub mod levels;
+pub mod voice_activity;

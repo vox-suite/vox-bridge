@@ -36,3 +36,5 @@ mod live_test_config_tests {
         }
     }
 }
+
+pub mod desktop;

@@ -79,7 +79,7 @@ impl ResponseMetrics {
             response_total_ms: between(Some(self.started), Some(finished)),
             core_stream_ms: between(self.core_requested, self.text_finished),
             speech_end_source: if speech_end.is_some() {
-                "mulaw_energy_estimate"
+                "earshot_audio_arrival"
             } else {
                 "unavailable"
             },

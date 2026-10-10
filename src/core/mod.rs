@@ -60,3 +60,5 @@ pub trait ConversationClient: Send + Sync {
 }
 
 pub use ConversationClient as AgentProvider;
+
+pub mod desktop;

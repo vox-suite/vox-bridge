@@ -25,6 +25,7 @@ use crate::channels::twilio::signature::validate_twilio_signature;
 use crate::channels::twilio::webhook::{TwilioState, VOICE_STREAM_URL};
 use crate::state::AppState;
 use crate::voice::provider::VoiceError;
+use crate::voice::session::input::admit_input;
 use crate::voice::session::{
     CallCommand, CallEvent, VoiceSessionHandle, shutdown_playback_session, spawn_playback_session,
 };
@@ -146,9 +147,11 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
     } = spawn_playback_session(providers.clone(), context.clone());
     let result = async {
         let mut transport = crate::voice::transport_metrics::TransportMetrics::default();
+        let mut pending_input: Option<(CallEvent, Instant)> = None;
         loop {
+            let admission_deadline = pending_input.as_ref().map(|(_, at)| tokio::time::Instant::from_std(*at) + std::time::Duration::from_secs(2));
             tokio::select! {
-                message = receiver.next() => {
+                message = receiver.next(), if pending_input.is_none() => {
                     match message {
                         Some(Ok(Message::Text(raw))) => match parse_inbound(raw.as_str())? {
                             InboundStreamMessage::Media { stream_sid: incoming_sid, media } => {
@@ -157,8 +160,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                                 }
                                 let audio = STANDARD.decode(media.payload)
                                     .map_err(|_| VoiceError::Protocol("invalid Twilio media payload".into()))?;
-                                input_tx.try_send(CallEvent::Audio(audio.into()))
-                                    .map_err(|_| VoiceError::Protocol("Twilio audio buffer unavailable".into()))?;
+                                pending_input = admit_input(&input_tx, CallEvent::Audio(audio.into()))?;
                             }
                             InboundStreamMessage::Stop => break Ok(()),
                             InboundStreamMessage::Mark { stream_sid: incoming_sid, mark } => {
@@ -166,8 +168,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                                     break Err(VoiceError::Protocol("Twilio stream identifier changed".into()));
                                 }
                                 transport.acknowledged(&mark.name);
-                                input_tx.try_send(CallEvent::PlaybackFinished(mark.name))
-                                    .map_err(|_| VoiceError::Protocol("Twilio playback buffer unavailable".into()))?;
+                                pending_input = admit_input(&input_tx, CallEvent::PlaybackFinished(mark.name))?;
                             }
                             InboundStreamMessage::Connected { .. } | InboundStreamMessage::Start { .. } => {
                                 break Err(VoiceError::Protocol("unexpected Twilio stream event".into()));
@@ -178,6 +179,22 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                         Some(Ok(_)) => {}
                         Some(Err(_)) => break Err(VoiceError::Protocol("Twilio socket receive failed".into())),
                     }
+                }
+                permit = input_tx.reserve(), if pending_input.is_some() => {
+                    let permit = permit.map_err(|_| VoiceError::Protocol("voice input receiver closed during backpressure".into()))?;
+                    if let Some((event, started)) = pending_input.take() {
+                        tracing::info!(wait_ms = started.elapsed().as_millis() as u64, "VOICE_INPUT_BACKPRESSURE_RECOVERED");
+                        permit.send(event);
+                    }
+                }
+                _ = async {
+                    match admission_deadline {
+                        Some(at) => tokio::time::sleep_until(at).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {
+                    tracing::warn!(timeout_ms = 2000, queue_capacity = input_tx.max_capacity(), "VOICE_INPUT_BACKPRESSURE_TIMEOUT");
+                    break Err(VoiceError::Protocol("voice input stalled for two seconds".into()));
                 }
                 command = output_rx.recv() => {
                     match command {
@@ -220,6 +237,9 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         }
     }.instrument(span)
     .await;
+    if let Err(error) = &result {
+        tracing::warn!(%stream_sid, %call_sid, bridge_error = %error, "VOICE_TRANSPORT_FAILED");
+    }
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(1),
         input_tx.send(CallEvent::Stop),
@@ -227,7 +247,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
     .await;
     shutdown_playback_session(voice_task, &providers, &context).await;
     state.twilio.remove(&call_sid);
-    tracing::info!(%stream_sid, %call_sid, "Twilio media stream closed");
+    tracing::info!(%stream_sid, %call_sid, outcome = if result.is_ok() { "completed" } else { "failed" }, "Twilio media stream closed");
     result
 }
 

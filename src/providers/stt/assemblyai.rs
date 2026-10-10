@@ -303,6 +303,14 @@ impl SttSession for AssemblyAiSession {
         Ok(())
     }
 
+    async fn force_endpoint(&self) -> Result<(), VoiceError> {
+        let mut sender = self.sender.lock().await;
+        sender
+            .send(Message::Text(r#"{"type":"ForceEndpoint"}"#.into()))
+            .await
+            .map_err(|_| provider_error("endpoint send failed"))
+    }
+
     async fn next_event(&self) -> Result<Option<SttEvent>, VoiceError> {
         loop {
             match self.receiver.lock().await.next().await {
