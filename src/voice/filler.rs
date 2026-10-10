@@ -309,6 +309,9 @@ pub async fn play_filler(
                 .send(CallCommand::Media {
                     bytes: chunk.clone(),
                     generation,
+                    kind: crate::voice::session::AudioKind::Filler,
+                    queued_at: std::time::Instant::now(),
+                    latency_origin_at: None,
                 })
                 .await
                 .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
@@ -349,6 +352,9 @@ pub async fn play_filler(
             .send(CallCommand::Media {
                 bytes: chunk_bytes.clone(),
                 generation,
+                kind: crate::voice::session::AudioKind::Filler,
+                queued_at: std::time::Instant::now(),
+                latency_origin_at: None,
             })
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;

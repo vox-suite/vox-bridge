@@ -18,6 +18,8 @@ pub const VOICE_STREAM_URL: &str = "wss://api.callvox.in/bridge/twilio/voice/str
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct TwilioState {
+    #[serde(skip)]
+    pub accepted_at: Option<std::time::Instant>,
     pub call_sid: String,
     pub account_sid: String,
     pub from: String,
@@ -43,6 +45,7 @@ pub async fn initialize_voice_socket(
     header: HeaderMap,
     body: String,
 ) -> Response {
+    let accepted_at = std::time::Instant::now();
     let Some(signature) = header
         .get("x-twilio-signature")
         .and_then(|value| value.to_str().ok())
@@ -84,9 +87,11 @@ pub async fn initialize_voice_socket(
 
     let call_sid = params.call_sid.clone();
     let external_conversation_id = params.call_sid.clone();
+    tracing::info!(%call_sid, conversation_id = %external_conversation_id, validation_ms = accepted_at.elapsed().as_millis() as u64, "VOICE_WEBHOOK_ACCEPTED");
     app_state.twilio.insert(
         params.call_sid.clone(),
         TwilioState {
+            accepted_at: Some(accepted_at),
             call_sid: params.call_sid,
             account_sid: params.account_sid,
             from,

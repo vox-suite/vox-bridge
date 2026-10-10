@@ -13,6 +13,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
+use std::time::Instant;
+use tracing::Instrument;
 
 use crate::channels::context::CallContext;
 use crate::channels::twilio::protocol::{
@@ -84,6 +86,7 @@ async fn handle_voice_socket(socket: WebSocket, state: Arc<AppState>) {
 }
 
 async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> {
+    let socket_started = Instant::now();
     let (mut sender, mut receiver) = socket.split();
     tracing::info!("Twilio media stream connected");
     let start = loop {
@@ -119,7 +122,9 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         .get(&call_sid)
         .map(|entry| entry.clone())
         .ok_or_else(|| VoiceError::Protocol("Twilio stream has no accepted call".into()))?;
-    tracing::info!(%stream_sid, %call_sid, "Twilio stream started");
+    let span = tracing::info_span!("voice_call", %stream_sid, %call_sid, conversation_id = %accepted_call.external_conversation_id);
+    tracing::info!(%stream_sid, %call_sid, conversation_id = %accepted_call.external_conversation_id, webhook_to_start_ms = accepted_call.accepted_at.map(|at| at.elapsed().as_millis() as u64), socket_to_start_ms = socket_started.elapsed().as_millis() as u64, "VOICE_TWILIO_START");
+    let provider_started = Instant::now();
     let profile = state.voice.resolver.resolve();
     let context = CallContext {
         channel: "phone".into(),
@@ -132,6 +137,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         filler: None,
     };
     let providers = state.voice.providers.providers_for(&profile)?;
+    tracing::info!(parent: &span, provider_build_ms = provider_started.elapsed().as_millis() as u64, "VOICE_PROVIDERS_READY");
     let VoiceSessionHandle {
         playback,
         input: input_tx,
@@ -139,6 +145,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         task: mut voice_task,
     } = spawn_playback_session(providers.clone(), context.clone());
     let result = async {
+        let mut transport = crate::voice::transport_metrics::TransportMetrics::default();
         loop {
             tokio::select! {
                 message = receiver.next() => {
@@ -158,6 +165,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                                 if incoming_sid != stream_sid {
                                     break Err(VoiceError::Protocol("Twilio stream identifier changed".into()));
                                 }
+                                transport.acknowledged(&mark.name);
                                 input_tx.try_send(CallEvent::PlaybackFinished(mark.name))
                                     .map_err(|_| VoiceError::Protocol("Twilio playback buffer unavailable".into()))?;
                             }
@@ -173,25 +181,30 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                 }
                 command = output_rx.recv() => {
                     match command {
-                        Some(CallCommand::Media { bytes, generation }) => {
+                        Some(CallCommand::Media { bytes, generation, kind, queued_at, latency_origin_at }) => {
                             if playback.accepts(generation) {
-                                let message = serialize_command(&stream_sid, &CallCommand::Media { bytes, generation })?;
+                                let byte_count = bytes.len();
+                                let write_started = Instant::now();
+                                let message = serialize_command(&stream_sid, &CallCommand::Media { bytes, generation, kind, queued_at, latency_origin_at })?;
                                 sender.send(Message::Text(message.into())).await
                                     .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
+                                transport.media(generation, kind, byte_count, queued_at, write_started, Instant::now(), latency_origin_at);
                             } else {
                                 tracing::debug!(generation, "Discarding stale media for invalidated playback generation");
                             }
                         }
                         Some(CallCommand::Mark { name, generation }) => {
                             if playback.accepts(generation) {
-                                let message = serialize_command(&stream_sid, &CallCommand::Mark { name, generation })?;
+                                let message = serialize_command(&stream_sid, &CallCommand::Mark { name: name.clone(), generation })?;
                                 sender.send(Message::Text(message.into())).await
                                     .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
+                                transport.mark(name, generation);
                             } else {
                                 tracing::debug!(generation, "Discarding stale mark for invalidated playback generation");
                             }
                         }
                         Some(CallCommand::Clear) => {
+                            transport.clear();
                             let message = serialize_command(&stream_sid, &CallCommand::Clear)?;
                             sender.send(Message::Text(message.into())).await
                                 .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
@@ -205,7 +218,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                 }
             }
         }
-    }
+    }.instrument(span)
     .await;
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(1),
@@ -230,6 +243,7 @@ fn restore_outbound_state(state: &AppState, start: &TwilioStartPayload) -> Resul
     state.twilio.insert(
         start.call_sid.clone(),
         TwilioState {
+            accepted_at: None,
             call_sid: start.call_sid.clone(),
             account_sid: state.twilio_account_sid.to_string(),
             from: value("external_identity")?,

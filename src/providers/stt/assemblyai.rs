@@ -229,7 +229,10 @@ pub fn parse_event(raw: &str) -> Result<Option<SttEvent>, VoiceError> {
             transcript,
         } if !transcript.trim().is_empty() => {
             let text = transcript.trim().to_owned();
-            tracing::info!(transcript = %text, "STT: Final user transcript received (AssemblyAI)");
+            tracing::info!(
+                transcript_bytes = text.len(),
+                "STT: Final user transcript received (AssemblyAI)"
+            );
             Ok(Some(SttEvent::FinalTranscript(text)))
         }
         AssemblyEvent::SpeechStarted => {

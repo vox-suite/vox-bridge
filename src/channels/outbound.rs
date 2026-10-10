@@ -97,6 +97,7 @@ pub async fn handle_outbound_call(
             state.twilio.insert(
                 call_sid.clone(),
                 TwilioState {
+                    accepted_at: None,
                     call_sid: call_sid.clone(),
                     account_sid: state.twilio_account_sid.to_string(),
                     from: to_number,

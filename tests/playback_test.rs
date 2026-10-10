@@ -29,6 +29,9 @@ fn serializes_call_commands_with_generation_correctly() {
     let cmd = CallCommand::Media {
         bytes: Bytes::from_static(b"test"),
         generation: 1,
+        kind: vox_bridge::voice::session::AudioKind::Answer,
+        queued_at: std::time::Instant::now(),
+        latency_origin_at: None,
     };
     let serialized = serialize_command("test-stream", &cmd).unwrap();
     assert!(serialized.contains("\"event\":\"media\""));

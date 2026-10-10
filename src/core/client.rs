@@ -641,16 +641,17 @@ impl ConversationClient for CoreClient {
                 .or(self.tts_provider.as_deref()),
             filler: context.filler.as_deref(),
         };
-        let send_result = self
+        let request = self
             .prepare_request(
                 self.client.post(&stream_endpoint),
                 &context.external_identity,
                 None,
             )?
             .header("Accept", "text/event-stream")
-            .json(&payload)
-            .send()
-            .await;
+            .json(&payload);
+        let client_prepare_ms = start_time.elapsed().as_millis();
+        let send_started = std::time::Instant::now();
+        let send_result = request.send().await;
 
         match send_result {
             Ok(response) if response.status().is_success() => {
@@ -668,11 +669,11 @@ impl ConversationClient for CoreClient {
                     turn_id = ?context.turn_id,
                     prompt_len = transcript.len(),
                     endpoint = %stream_endpoint,
-                    connect_time_ms,
+                    connect_time_ms, client_prepare_ms, send_to_headers_ms = send_started.elapsed().as_millis(),
                     server_prepare_ms = ?server_prepare_ms,
                     server_context_ms = ?header_ms("x-vox-context-ms"),
-                    network_overhead_ms = ?server_prepare_ms.map(|s| connect_time_ms.saturating_sub(s)),
-                    "CoreClient: Stream connection established"
+                    transport_and_client_overhead_ms = ?server_prepare_ms.and_then(|s| connect_time_ms.checked_sub(s)),
+                    "VOICE_CORE_HEADERS"
                 );
                 let stream = response.bytes_stream();
                 Ok(Box::pin(parse_sse_stream(stream)))
@@ -684,7 +685,7 @@ impl ConversationClient for CoreClient {
                 tracing::warn!(
                     endpoint = %stream_endpoint,
                     elapsed_ms = start_time.elapsed().as_millis(),
-                    "CoreClient: Stream unavailable, falling back to unary respond"
+                    "VOICE_CORE_UNARY_FALLBACK"
                 );
                 let text = self.respond(context, transcript).await?;
                 Ok(Box::pin(stream::once(async move {
@@ -698,7 +699,7 @@ impl ConversationClient for CoreClient {
                     conversation_id = %context.external_conversation_id,
                     %status,
                     response_bytes = body.len(),
-                    "CoreClient: Stream request rejected"
+                    "VOICE_CORE_REJECTED"
                 );
                 Err(VoiceError::Provider {
                     provider: "core",

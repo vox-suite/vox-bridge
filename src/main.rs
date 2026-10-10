@@ -16,7 +16,13 @@ use vox_bridge::{AppState, app};
 async fn main() {
     dotenv::dotenv().ok();
     install_crypto_provider();
-    tracing_subscriber::fmt::init();
+    if std::env::var("LOG_FORMAT").as_deref() == Ok("json")
+        || std::env::var_os("RAILWAY_ENVIRONMENT_ID").is_some()
+    {
+        tracing_subscriber::fmt().json().flatten_event(true).init();
+    } else {
+        tracing_subscriber::fmt::init();
+    }
 
     let twilio_state = Arc::new(DashMap::new());
     let voice_config = VoiceConfig::from_env().expect("voice provider configuration is invalid");

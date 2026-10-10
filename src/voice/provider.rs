@@ -28,3 +28,14 @@ pub enum VoiceError {
     #[error("{0} timed out")]
     Timeout(&'static str),
 }
+
+impl VoiceError {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Configuration(_) => "configuration",
+            Self::Provider { .. } => "provider",
+            Self::Protocol(_) => "protocol",
+            Self::Timeout(_) => "timeout",
+        }
+    }
+}
