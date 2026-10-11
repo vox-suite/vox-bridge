@@ -35,9 +35,12 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
     let first = tokio::time::timeout(Duration::from_secs(5), receiver.next())
         .await
         .map_err(|_| VoiceError::Timeout("desktop_start"))?;
-    let ticket = match first {
+    let (ticket, client_metrics) = match first {
         Some(Ok(Message::Text(raw))) => match parse_control(&raw)? {
-            Control::Start { ticket } => ticket,
+            Control::Start {
+                ticket,
+                client_metrics,
+            } => (ticket, client_metrics),
             _ => return Err(VoiceError::Protocol("start_required".into())),
         },
         _ => return Err(VoiceError::Protocol("start_required".into())),
@@ -51,9 +54,7 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
         channel: "voice".into(),
         external_identity: binding.user_id,
         external_conversation_id: format!("desktop:{}", binding.session_id),
-        initiation_context: Some(
-            "Start the live desktop conversation with a brief greeting.".into(),
-        ),
+        initiation_context: Some("The call just connected. Greet the user.".into()),
         turn_id: None,
         revision: None,
         tts_provider: Some(profile.tts.provider),
@@ -64,8 +65,9 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
     let result=async {
         send_frame(&mut sender,Message::Text(connected.to_string().into())).await.map_err(|_|VoiceError::Protocol("connection_closed".into()))?;
         let mut heartbeat=tokio::time::interval(Duration::from_secs(20));
+        let mut last_audio_segment = None;
         let mut pending_input: Option<(CallEvent, Instant)> = None;
-        let mut transport = crate::voice::transport_metrics::TransportMetrics::default();
+        let mut transport = crate::voice::transport_metrics::TransportMetrics::new(context.external_conversation_id.clone());
         loop {
             let deadline = pending_input.as_ref().map(|(_, at)| tokio::time::Instant::from_std(*at) + Duration::from_secs(2));
             tokio::select! {
@@ -77,6 +79,9 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
                     Some(Ok(Message::Text(raw)))=>match parse_control(&raw)? {
                         Control::PlaybackFinished {name}=>{transport.acknowledged(&name);pending_input=admit_input(&handle.input,CallEvent::PlaybackFinished(name))?;},
                         Control::Text {text}=>pending_input=admit_input(&handle.input,CallEvent::Text(text))?,
+                        Control::ClientMetric {stage,elapsed_ms,generation,buffered_ms}=>{
+                            tracing::info!(conversation_id = %context.external_conversation_id, ?stage, elapsed_ms, generation, buffered_ms, source = "client_reported", "VOICE_CLIENT_LATENCY");
+                        },
                         Control::Stop=>break,
                         Control::Start {..}=>return Err(VoiceError::Protocol("duplicate_start".into()))
                     },
@@ -99,6 +104,10 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
                     let message=match command {
                         CallCommand::Media {bytes,generation,kind,queued_at,latency_origin_at}=>{
                             if !handle.playback.accepts(generation){continue;}
+                            if client_metrics && last_audio_segment != Some((generation,kind)) {
+                                send_frame(&mut sender,Message::Text(json!({"type":"audio_start","generation":generation,"audio_kind":kind.label()}).to_string().into())).await?;
+                                last_audio_segment = Some((generation,kind));
+                            }
                             let byte_count=bytes.len();
                             let started=Instant::now();
                             send_frame(&mut sender,Message::Binary(bytes)).await?;
@@ -107,9 +116,11 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
                         },
                         CallCommand::Mark {name,generation}=>{
                             if !handle.playback.accepts(generation){continue;}
-                            Message::Text(json!({"type":"mark","name":name,"generation":generation}).to_string().into())
+                            send_frame(&mut sender,Message::Text(json!({"type":"mark","name":name,"generation":generation}).to_string().into())).await?;
+                            transport.mark(name,generation);
+                            continue;
                         },
-                        CallCommand::Clear=>Message::Text(json!({"type":"clear","generation":handle.playback.current_generation()}).to_string().into())
+                        CallCommand::Clear=>{transport.clear();last_audio_segment=None;Message::Text(json!({"type":"clear","generation":handle.playback.current_generation()}).to_string().into())}
                     };
                     send_frame(&mut sender,message).await.map_err(|_|VoiceError::Protocol("connection_closed".into()))?;
                 },

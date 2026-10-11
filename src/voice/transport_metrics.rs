@@ -3,6 +3,7 @@ use std::{collections::HashMap, time::Instant};
 
 #[derive(Default)]
 pub struct TransportMetrics {
+    conversation_id: String,
     generations: HashMap<u64, Generation>,
     marks: HashMap<String, (u64, Instant, bool)>,
 }
@@ -20,6 +21,13 @@ struct Generation {
     apology_seen: bool,
 }
 impl TransportMetrics {
+    pub fn new(conversation_id: String) -> Self {
+        Self {
+            conversation_id,
+            generations: HashMap::new(),
+            marks: HashMap::new(),
+        }
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn media(
         &mut self,
@@ -53,6 +61,7 @@ impl TransportMetrics {
         if !*seen {
             *seen = true;
             tracing::info!(
+                conversation_id = %self.conversation_id,
                 generation,
                 audio_kind = kind.label(),
                 queue_ms,
@@ -78,6 +87,7 @@ impl TransportMetrics {
     pub fn acknowledged(&mut self, name: &str) {
         if let Some((generation, sent, cleared)) = self.marks.remove(name) {
             tracing::info!(
+                conversation_id = %self.conversation_id,
                 generation,
                 mark_roundtrip_ms = sent.elapsed().as_millis() as u64,
                 cleared,
@@ -103,6 +113,7 @@ impl TransportMetrics {
     fn report(&self, generation: u64, outcome: &str) {
         if let Some(s) = self.generations.get(&generation) {
             tracing::info!(
+                conversation_id = %self.conversation_id,
                 generation,
                 outcome,
                 audio_frames = s.frames,

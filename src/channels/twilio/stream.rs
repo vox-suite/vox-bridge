@@ -146,7 +146,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         task: mut voice_task,
     } = spawn_playback_session(providers.clone(), context.clone());
     let result = async {
-        let mut transport = crate::voice::transport_metrics::TransportMetrics::default();
+        let mut transport = crate::voice::transport_metrics::TransportMetrics::new(context.external_conversation_id.clone());
         let mut pending_input: Option<(CallEvent, Instant)> = None;
         loop {
             let admission_deadline = pending_input.as_ref().map(|(_, at)| tokio::time::Instant::from_std(*at) + std::time::Duration::from_secs(2));

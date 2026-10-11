@@ -13,21 +13,17 @@ use crate::core::{ConversationClient, ConversationEvent, ConversationEventStream
 use crate::providers::jev::JevClient;
 use crate::providers::tts::TtsProvider;
 use crate::voice::chunker::SentenceChunker;
-use crate::voice::filler::{
-    is_conversational_pleasantry, play_filler, rotate_filler_for_choice_and_tone, strip_leading_ack,
-};
+use crate::voice::filler::strip_leading_ack;
 use crate::voice::metrics::{ResponseMetrics, TurnTiming, log_turn_latency};
 use crate::voice::provider::VoiceError;
 use crate::voice::session::mod_types::{AudioKind, CallCommand, SessionSignal};
 use crate::voice::session::playback::PlaybackState;
 
 enum Spoken {
-    Filler(&'static str),
     Sentence {
         text: String,
         queued_at: std::time::Instant,
     },
-    Mark(String),
 }
 
 struct ResponseLifecycle {
@@ -165,8 +161,8 @@ async fn stream_response(
     metrics: Arc<Mutex<ResponseMetrics>>,
     agent: Arc<dyn ConversationClient>,
     tts: Arc<dyn TtsProvider>,
-    filler_tts: Arc<dyn TtsProvider>,
-    jev: Option<Arc<JevClient>>,
+    _filler_tts: Arc<dyn TtsProvider>,
+    _jev: Option<Arc<JevClient>>,
     output: mpsc::Sender<CallCommand>,
     audio_playing: Arc<std::sync::atomic::AtomicBool>,
     answer_started: Arc<std::sync::atomic::AtomicBool>,
@@ -184,7 +180,6 @@ async fn stream_response(
     let (spoken_tx, mut spoken_rx) = mpsc::channel(8);
     let player_output = output.clone();
     let player_tts = tts.clone();
-    let player_filler_tts = filler_tts.clone();
     let player_audio = audio_playing.clone();
     let player_answer = answer_started.clone();
     let player_playback = playback.clone();
@@ -195,27 +190,12 @@ async fn stream_response(
         async move {
             let mut first_tts_ttfb_ms = None;
             let mut first_audio_sent_at = None;
-            let mut filler_audio_at = None;
+            let filler_audio_at: Option<std::time::Instant> = None;
             while let Some(job) = spoken_rx.recv().await {
                 if !player_playback.accepts(generation) {
                     break;
                 }
                 match job {
-                    Spoken::Filler(phrase) => {
-                        if play_filler(
-                            phrase,
-                            player_filler_tts.as_ref(),
-                            &player_output,
-                            &mut filler_audio_at,
-                            &player_audio,
-                            generation,
-                        )
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
                     Spoken::Sentence {
                         text: sentence,
                         queued_at,
@@ -254,16 +234,6 @@ async fn stream_response(
                             }
                         }
                     }
-                    Spoken::Mark(name) => {
-                        player_metrics.lock().unwrap().first_filler_enqueued = filler_audio_at;
-                        if player_output
-                            .send(CallCommand::Mark { name, generation })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
                 }
             }
             if player_playback.accepts(generation)
@@ -284,60 +254,11 @@ async fn stream_response(
     let mut chunker = SentenceChunker::new();
     let mut full_response = String::new();
     let mut sentence_count = 0usize;
-    let filler_decision_started = std::time::Instant::now();
-
-    let mut filler_played = false;
-    let is_opening = number == 1 || transcript == "The call just connected. Greet the user.";
-    let is_pleasantry = is_conversational_pleasantry(transcript);
-    let mut mut_context = context.clone();
-
-    if !is_opening && !is_pleasantry {
-        let (choice, tone) = if let Some(client) = &jev {
-            match tokio::time::timeout(
-                Duration::from_millis(250),
-                client.choose_filler_and_tone(transcript),
-            )
-            .await
-            {
-                Ok(Ok((c, t))) => (c, t),
-                Ok(Err(err)) => {
-                    tracing::warn!(error = %err, "Jev filler choice failed, using fallback");
-                    ("looking_into_that".to_string(), "calm".to_string())
-                }
-                Err(_) => {
-                    tracing::warn!("Jev filler choice timed out, using fallback");
-                    ("looking_into_that".to_string(), "calm".to_string())
-                }
-            }
-        } else {
-            ("looking_into_that".to_string(), "calm".to_string())
-        };
-
-        let filler_phrase = rotate_filler_for_choice_and_tone(&choice, &tone);
-        if !filler_phrase.is_empty() {
-            filler_played = true;
-            mut_context.filler = Some(filler_phrase.to_string());
-            spoken_tx
-                .send(Spoken::Filler(filler_phrase))
-                .await
-                .map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
-            spoken_tx
-                .send(Spoken::Mark(format!("filler-{number}")))
-                .await
-                .map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
-            tracing::info!(
-                turn = number,
-                phrase = filler_phrase,
-                choice = %choice,
-                tone = %tone,
-                "VOICE_LOOKUP_ACKNOWLEDGED"
-            );
-        }
-    }
-
+    let filler_played = false;
+    let mut_context = context.clone();
     {
         let mut m = metrics.lock().unwrap();
-        m.filler_decision_ms = Some(filler_decision_started.elapsed().as_millis() as u64);
+        m.filler_decision_ms = Some(0);
         m.core_requested = Some(std::time::Instant::now());
         m.last_stage = "core_headers";
     }

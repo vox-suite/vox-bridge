@@ -270,7 +270,7 @@ pub async fn run_voice_session_with_playback(
                                     .await
                                     .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
                                 report.interruptions += 1;
-                            tracing::info!(turn = response_number, playing = is_playing, "VOICE_TURN_INTERRUPTED");
+                            tracing::info!(conversation_id = %context.external_conversation_id, turn = response_number, generation = playback.current_generation(), reason = "partial_transcript", playing = is_playing, "VOICE_TURN_INTERRUPTED");
                             }
                         }
 
@@ -306,7 +306,7 @@ pub async fn run_voice_session_with_playback(
                                 .await
                                 .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
                             report.interruptions += 1;
-                            tracing::info!(turn = response_number, playing = is_playing, "VOICE_TURN_INTERRUPTED");
+                            tracing::info!(conversation_id = %context.external_conversation_id, turn = response_number, generation = playback.current_generation(), reason = "final_transcript", playing = is_playing, "VOICE_TURN_INTERRUPTED");
                         }
 
                         let now = std::time::Instant::now();
