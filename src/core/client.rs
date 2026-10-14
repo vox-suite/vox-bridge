@@ -699,6 +699,12 @@ impl ConversationClient for CoreClient {
                     conversation_id = %context.external_conversation_id,
                     %status,
                     response_bytes = body.len(),
+                    channel = %context.channel,
+                    endpoint = %stream_endpoint,
+                    credential_id = ?self.host_credential_id,
+                    audience = ?self.host_audience,
+                    host_secret_configured = self.host_secret.as_ref().is_some_and(|secret| !secret.is_empty()),
+                    elapsed_ms = start_time.elapsed().as_millis() as u64,
                     "VOICE_CORE_REJECTED"
                 );
                 Err(VoiceError::Provider {

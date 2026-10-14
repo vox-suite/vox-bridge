@@ -524,7 +524,7 @@ async fn test_unknown_outcome_and_core_unreachable_fail_closed() {
 
     assert!(uncertainty.contains("Unconfirmed Outcome"));
     assert!(uncertainty.contains("No action was assumed completed"));
-    assert!(uncertainty.contains("app.callvox.si"));
+    assert!(uncertainty.contains("app.callvox.in"));
 }
 
 // ==============================================================================

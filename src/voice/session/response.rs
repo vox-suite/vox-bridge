@@ -23,7 +23,15 @@ enum Spoken {
     Sentence {
         text: String,
         queued_at: std::time::Instant,
+        kind: AudioKind,
     },
+}
+
+struct AbortPlayerOnDrop(tokio::task::AbortHandle);
+impl Drop for AbortPlayerOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 struct ResponseLifecycle {
@@ -161,8 +169,8 @@ async fn stream_response(
     metrics: Arc<Mutex<ResponseMetrics>>,
     agent: Arc<dyn ConversationClient>,
     tts: Arc<dyn TtsProvider>,
-    _filler_tts: Arc<dyn TtsProvider>,
-    _jev: Option<Arc<JevClient>>,
+    filler_tts: Arc<dyn TtsProvider>,
+    jev: Option<Arc<JevClient>>,
     output: mpsc::Sender<CallCommand>,
     audio_playing: Arc<std::sync::atomic::AtomicBool>,
     answer_started: Arc<std::sync::atomic::AtomicBool>,
@@ -190,7 +198,7 @@ async fn stream_response(
         async move {
             let mut first_tts_ttfb_ms = None;
             let mut first_audio_sent_at = None;
-            let filler_audio_at: Option<std::time::Instant> = None;
+            let mut filler_audio_at: Option<std::time::Instant> = None;
             while let Some(job) = spoken_rx.recv().await {
                 if !player_playback.accepts(generation) {
                     break;
@@ -199,28 +207,39 @@ async fn stream_response(
                     Spoken::Sentence {
                         text: sentence,
                         queued_at,
+                        kind,
                     } => {
                         tracing::info!(
                             speech_queue_wait_ms = queued_at.elapsed().as_millis() as u64,
                             sentence_bytes = sentence.len(),
                             "VOICE_TTS_SENTENCE_STARTED"
                         );
+                        let sentence_tts = if kind == AudioKind::Filler {
+                            filler_tts.as_ref()
+                        } else {
+                            player_tts.as_ref()
+                        };
+                        let tracker = if kind == AudioKind::Filler {
+                            &mut filler_audio_at
+                        } else {
+                            &mut first_audio_sent_at
+                        };
                         match play_sentence(
                             &sentence,
-                            player_tts.as_ref(),
+                            sentence_tts,
                             &player_output,
-                            &mut first_audio_sent_at,
+                            tracker,
                             &player_audio,
                             &player_answer,
                             &player_playback,
                             generation,
-                            AudioKind::Answer,
+                            kind,
                             Some(&player_metrics),
                         )
                         .await
                         {
                             Ok(ttfb) => {
-                                if first_tts_ttfb_ms.is_none() {
+                                if kind == AudioKind::Answer && first_tts_ttfb_ms.is_none() {
                                     first_tts_ttfb_ms = Some(ttfb);
                                 }
                             }
@@ -251,14 +270,14 @@ async fn stream_response(
         .instrument(player_span),
     );
 
+    let _player_guard = AbortPlayerOnDrop(player.abort_handle());
     let mut chunker = SentenceChunker::new();
     let mut full_response = String::new();
     let mut sentence_count = 0usize;
-    let filler_played = false;
+    let mut filler_played = false;
     let mut_context = context.clone();
     {
         let mut m = metrics.lock().unwrap();
-        m.filler_decision_ms = Some(0);
         m.core_requested = Some(std::time::Instant::now());
         m.last_stage = "core_headers";
     }
@@ -268,6 +287,33 @@ async fn stream_response(
         agent.respond_events(&mut_context, transcript),
     ));
     let mut text_stream: Option<ConversationEventStream> = None;
+
+    let is_greeting = number == 1 && context.initiation_context.is_some();
+    let mut acknowledgement_done =
+        is_greeting || crate::voice::filler::is_conversational_pleasantry(transcript);
+    let mut acknowledgement = Box::pin(async {
+        let phrase = if let Some(jev) = jev {
+            match jev.choose_acknowledgement(transcript).await {
+                Ok(phrase) => phrase,
+                Err(error) => {
+                    tracing::warn!(
+                        error_kind = error.kind(),
+                        "VOICE_ACKNOWLEDGEMENT_SELECTION_FAILED"
+                    );
+                    Some("One moment, please.")
+                }
+            }
+        } else {
+            tracing::info!(reason = "jev_unavailable", "VOICE_ACKNOWLEDGEMENT_SKIPPED");
+            None
+        };
+        let decision_ms = core_request_start.elapsed().as_millis() as u64;
+        tokio::time::sleep_until(tokio::time::Instant::from_std(
+            core_request_start + Duration::from_millis(350),
+        ))
+        .await;
+        (phrase, decision_ms)
+    });
 
     loop {
         let next = tokio::select! {
@@ -286,6 +332,19 @@ async fn stream_response(
                 }
             }, if text_stream.is_some() => {
                 result.map_err(|_| VoiceError::Timeout("Core stream"))?
+            }
+            selected = &mut acknowledgement, if !acknowledgement_done => {
+                acknowledgement_done = true;
+                let (phrase, decision_ms) = selected;
+                metrics.lock().unwrap().filler_decision_ms = Some(decision_ms);
+                if metrics.lock().unwrap().first_text.is_none() && let Some(phrase) = phrase {
+                    tracing::info!(phrase, decision_ms, "VOICE_ACKNOWLEDGEMENT_SELECTED");
+                    spoken_tx.send(Spoken::Sentence { text: phrase.into(), queued_at: std::time::Instant::now(), kind: AudioKind::Filler }).await.map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
+                    filler_played = true;
+                } else {
+                    tracing::info!(reason = if phrase.is_none() { "no_lookup_needed" } else { "answer_ready" }, decision_ms, "VOICE_ACKNOWLEDGEMENT_SKIPPED");
+                }
+                continue;
             }
         };
         let Some(event) = next else {
@@ -311,6 +370,7 @@ async fn stream_response(
                 "VOICE_MILESTONE"
             );
         }
+        acknowledgement_done = true;
         full_response.push_str(&chunk);
 
         let sentences = chunker.push(&chunk);
@@ -319,7 +379,7 @@ async fn stream_response(
             if trimmed.is_empty() {
                 continue;
             }
-            if filler_played {
+            if filler_played && sentence_count == 0 {
                 trimmed = strip_leading_ack(trimmed);
                 if trimmed.is_empty() {
                     continue;
@@ -343,6 +403,7 @@ async fn stream_response(
                 .send(Spoken::Sentence {
                     text: trimmed.to_string(),
                     queued_at: std::time::Instant::now(),
+                    kind: AudioKind::Answer,
                 })
                 .await
                 .map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
@@ -352,7 +413,7 @@ async fn stream_response(
     if let Some(remaining) = chunker.flush() {
         let mut trimmed = remaining.trim();
         if !trimmed.is_empty() {
-            if filler_played {
+            if filler_played && sentence_count == 0 {
                 trimmed = strip_leading_ack(trimmed);
             }
             if !trimmed.is_empty() {
@@ -365,6 +426,7 @@ async fn stream_response(
                     .send(Spoken::Sentence {
                         text: trimmed.to_string(),
                         queued_at: std::time::Instant::now(),
+                        kind: AudioKind::Answer,
                     })
                     .await
                     .map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
@@ -406,7 +468,7 @@ async fn speak_apology(
         VoiceError::Timeout(_) => {
             "Sorry, that's taking longer than expected. Could you say that again?"
         }
-        _ => "Sorry, I ran into a problem with that. Could you try again?",
+        _ => "Sorry, I’m having trouble connecting. Please try again shortly.",
     };
     let mut first_audio_tracker = None;
     let played = play_sentence(
@@ -479,7 +541,10 @@ async fn play_sentence(
         }
         let received = std::time::Instant::now();
         report.record(chunk_bytes.len(), received);
-        if is_first_chunk && let Some(metrics) = metrics {
+        if kind == AudioKind::Answer
+            && is_first_chunk
+            && let Some(metrics) = metrics
+        {
             metrics
                 .lock()
                 .unwrap()
@@ -504,18 +569,25 @@ async fn play_sentence(
             .await
             .map_err(|_| VoiceError::Protocol("call output closed".into()))?;
 
-        answer_started.store(true, std::sync::atomic::Ordering::SeqCst);
+        if kind == AudioKind::Answer {
+            answer_started.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         audio_playing.store(true, std::sync::atomic::Ordering::SeqCst);
 
         let now = std::time::Instant::now();
         if is_first_chunk {
             ttfb_ms = received.duration_since(tts_start).as_millis();
             if let Some(metrics) = metrics {
-                metrics
-                    .lock()
-                    .unwrap()
-                    .first_answer_enqueued
-                    .get_or_insert(now);
+                let mut m = metrics.lock().unwrap();
+                match kind {
+                    AudioKind::Filler => {
+                        m.first_filler_enqueued.get_or_insert(now);
+                    }
+                    AudioKind::Answer => {
+                        m.first_answer_enqueued.get_or_insert(now);
+                    }
+                    AudioKind::Apology => {}
+                }
             }
             tracing::info!(
                 stage = "audio_enqueued",

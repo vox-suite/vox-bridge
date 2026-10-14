@@ -20,6 +20,33 @@ pub const FILLER_CHECK_ACCOUNT: &str = "Let me look up your account details.";
 pub const FILLER_CHECK_INVENTORY: &str = "Let me check the latest availability for you.";
 pub const FILLER_GIVE_ME_A_MOMENT: &str = "Give me just a moment to pull that together.";
 
+pub const ACKNOWLEDGEMENTS: &[&str] = &[
+    "Okay, let me check that for you.",
+    "Let me look into that.",
+    "I'll check that now.",
+    "One moment while I look that up.",
+    "Let me see what I can find.",
+    "I'll pull up the details.",
+    "Let me check the latest information.",
+    "Give me a moment to check.",
+    "Okay, I'm looking into it.",
+    "Let me take a closer look.",
+    "I'll look that up for you.",
+    "Let me check the weather there.",
+    "I'll check the latest forecast.",
+    "Let me check the current conditions.",
+    "Let me check those details.",
+    "I'll look through that for you.",
+    "Let me check what's available.",
+    "I'll check the latest options.",
+    "Let me look up that order.",
+    "I'll check the order details.",
+    "Let me check your account details.",
+    "I'll look through your recent history.",
+    "Let me work through that.",
+    "Give me a moment to put that together.",
+];
+
 pub const GENERAL_FILLERS: &[&str] = &[
     "I'm looking into that.",
     "Let me check on that for you.",

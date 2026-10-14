@@ -62,6 +62,50 @@ impl JevClient {
         Ok(parsed)
     }
 
+    pub async fn choose_acknowledgement(
+        &self,
+        transcript: &str,
+    ) -> Result<Option<&'static str>, VoiceError> {
+        let mut criteria = serde_json::Map::new();
+        criteria.insert("none".into(), json!("No acknowledgment for greetings, gratitude, closures, or questions that need no lookup or work."));
+        for (index, phrase) in crate::voice::filler::ACKNOWLEDGEMENTS.iter().enumerate() {
+            criteria.insert(index.to_string(), json!(phrase));
+        }
+        let body = json!({
+            "state": transcript,
+            "model": "jev-latest",
+            "questions": {
+                "acknowledgement": {
+                    "type": "choice",
+                    "instructions": "Choose one brief, natural acknowledgment to speak while the main assistant works in parallel. Match the request and its tone. Weather phrases only for weather requests; order and account phrases only for those requests. Never claim a result, success, or completed action. Choose none if no lookup or work is needed.",
+                    "criteria": criteria
+                }
+            }
+        });
+        let parsed = self
+            .post_system_one(&body, Duration::from_millis(500))
+            .await?;
+        let choice = parsed["answers"]["acknowledgement"]["choice"]
+            .as_str()
+            .ok_or_else(|| VoiceError::Provider {
+                provider: "jev",
+                message: "invalid acknowledgement choice".into(),
+            })?;
+        if choice == "none" {
+            return Ok(None);
+        }
+        let phrase = choice
+            .parse::<usize>()
+            .ok()
+            .and_then(|index| crate::voice::filler::ACKNOWLEDGEMENTS.get(index))
+            .copied()
+            .ok_or_else(|| VoiceError::Provider {
+                provider: "jev",
+                message: "unknown acknowledgement choice".into(),
+            })?;
+        Ok(Some(phrase))
+    }
+
     pub async fn choose_filler_and_tone(
         &self,
         transcript: &str,
