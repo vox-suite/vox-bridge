@@ -300,7 +300,7 @@ async fn stream_response(
                         error_kind = error.kind(),
                         "VOICE_ACKNOWLEDGEMENT_SELECTION_FAILED"
                     );
-                    Some("One moment, please.")
+                    None
                 }
             }
         } else {
