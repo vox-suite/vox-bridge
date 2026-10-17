@@ -17,6 +17,7 @@ pub struct CallContext {
     pub revision: Option<u64>,
     pub tts_provider: Option<String>,
     pub filler: Option<String>,
+    pub outbound: bool,
 }
 
 pub fn normalized_e164(value: &str) -> Option<String> {

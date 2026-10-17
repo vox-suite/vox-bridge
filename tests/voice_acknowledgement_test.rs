@@ -98,6 +98,7 @@ async fn run_scenario(
             revision: Some(0),
             tts_provider: None,
             filler: None,
+            outbound: false,
         },
         "Weather in Chennai?".into(),
         Some(TurnTiming {
@@ -240,7 +241,13 @@ async fn interruption_cancels_answer_after_acknowledgement() {
 #[tokio::test]
 async fn malformed_jev_choice_stays_silent_then_answers() {
     let commands = run(Duration::from_millis(1200), false, "unexpected").await;
-    assert!(!commands.iter().any(|command| matches!(command, CallCommand::Media { kind: AudioKind::Filler, .. })));
+    assert!(!commands.iter().any(|command| matches!(
+        command,
+        CallCommand::Media {
+            kind: AudioKind::Filler,
+            ..
+        }
+    )));
     assert!(commands.iter().any(|command| matches!(
         command,
         CallCommand::Media {

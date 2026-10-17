@@ -178,6 +178,7 @@ async fn test_channel_auth_failure_voice_and_messaging_fails_closed() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     let verify_res = ChannelInteractionHandler::verify_sender(&context, "+19998887777");
@@ -283,6 +284,7 @@ async fn test_channel_reconnect_synchronizes_authoritative_core_state() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     // Caller reconnects after dropped call and asks: "status"
@@ -442,6 +444,7 @@ async fn test_consequential_approval_changed_proposal_and_duplicate_decision() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     // First decision: exact match approved
@@ -503,6 +506,7 @@ async fn test_unknown_outcome_and_core_unreachable_fail_closed() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     let result = ChannelInteractionHandler::handle_approve(

@@ -201,6 +201,7 @@ async fn test_sender_verification_blocks_unauthorized_parties() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     // Valid sender
@@ -256,6 +257,7 @@ async fn test_cannot_forge_approval_when_core_rejects_expired_or_changed_proposa
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     let result = ChannelInteractionHandler::handle_approve(
@@ -298,6 +300,7 @@ async fn test_cannot_report_success_independently_when_core_is_unreachable() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     let result = ChannelInteractionHandler::handle_approve(
@@ -371,6 +374,7 @@ async fn test_reconnect_and_status_command_fetches_authoritative_run_state() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     // First query: on session start
@@ -430,6 +434,7 @@ async fn test_duplicate_decision_reports_duplicate_safely() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
 
     let result = ChannelInteractionHandler::handle_approve(

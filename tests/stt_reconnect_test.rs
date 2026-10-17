@@ -74,6 +74,7 @@ async fn closed_stt_stream_reconnects_then_ends_instead_of_spinning() {
         revision: None,
         tts_provider: None,
         filler: None,
+        outbound: false,
     };
     let (_input_tx, input_rx) = mpsc::channel(8);
     let (output_tx, _output_rx) = mpsc::channel(8);

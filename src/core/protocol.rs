@@ -27,6 +27,8 @@ pub struct RespondRequest<'a> {
     pub tts_provider: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filler: Option<&'a str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub outbound: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

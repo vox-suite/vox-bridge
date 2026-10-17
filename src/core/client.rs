@@ -583,6 +583,7 @@ impl ConversationClient for CoreClient {
                 .as_deref()
                 .or(self.tts_provider.as_deref()),
             filler: context.filler.as_deref(),
+            outbound: context.outbound,
         };
         let response = self
             .prepare_request(
@@ -640,6 +641,7 @@ impl ConversationClient for CoreClient {
                 .as_deref()
                 .or(self.tts_provider.as_deref()),
             filler: context.filler.as_deref(),
+            outbound: context.outbound,
         };
         let request = self
             .prepare_request(

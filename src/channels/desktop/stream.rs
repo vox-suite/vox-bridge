@@ -59,6 +59,7 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
         revision: None,
         tts_provider: Some(profile.tts.provider),
         filler: None,
+        outbound: false,
     };
     let mut handle = spawn_playback_session(providers.clone(), context.clone());
     let connected = json!({"type":"connected","session_id":binding.session_id,"device_id":binding.device_id,"audio_format":"mulaw","sample_rate":8000,"input_mode":"stream","speech_detector":"earshot"});
