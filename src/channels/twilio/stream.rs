@@ -200,8 +200,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                                 let byte_count = bytes.len();
                                 let write_started = Instant::now();
                                 let message = serialize_command(&stream_sid, &CallCommand::Media { bytes, generation, kind, queued_at, latency_origin_at })?;
-                                sender.send(Message::Text(message.into())).await
-                                    .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
+                                send_frame(&mut sender, Message::Text(message.into())).await?;
                                 transport.media(generation, kind, byte_count, queued_at, write_started, Instant::now(), latency_origin_at);
                             } else {
                                 tracing::debug!(generation, "Discarding stale media for invalidated playback generation");
@@ -210,8 +209,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                         Some(CallCommand::Mark { name, generation }) => {
                             if playback.accepts(generation) {
                                 let message = serialize_command(&stream_sid, &CallCommand::Mark { name: name.clone(), generation })?;
-                                sender.send(Message::Text(message.into())).await
-                                    .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
+                                send_frame(&mut sender, Message::Text(message.into())).await?;
                                 transport.mark(name, generation);
                             } else {
                                 tracing::debug!(generation, "Discarding stale mark for invalidated playback generation");
@@ -220,8 +218,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
                         Some(CallCommand::Clear) => {
                             transport.clear();
                             let message = serialize_command(&stream_sid, &CallCommand::Clear)?;
-                            sender.send(Message::Text(message.into())).await
-                                .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))?;
+                            send_frame(&mut sender, Message::Text(message.into())).await?;
                         }
                         None => break Ok(()),
                     }
@@ -284,5 +281,52 @@ fn validate_start(
         Err(VoiceError::Protocol(
             "Twilio stream has no accepted call".into(),
         ))
+    }
+}
+
+async fn send_frame<S>(sender: &mut S, message: Message) -> Result<(), VoiceError>
+where
+    S: futures_util::Sink<Message> + Unpin,
+{
+    tokio::time::timeout(std::time::Duration::from_secs(1), sender.send(message))
+        .await
+        .map_err(|_| VoiceError::Timeout("twilio_write"))?
+        .map_err(|_| VoiceError::Protocol("Twilio socket send failed".into()))
+}
+
+#[cfg(test)]
+mod write_deadline_tests {
+    use super::*;
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    struct StalledSink;
+    impl futures_util::Sink<Message> for StalledSink {
+        type Error = ();
+        fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            Poll::Pending
+        }
+        fn start_send(self: Pin<&mut Self>, _: Message) -> Result<(), ()> {
+            Ok(())
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            Poll::Pending
+        }
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            Poll::Pending
+        }
+    }
+    #[tokio::test]
+    async fn stalled_twilio_write_times_out() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            send_frame(&mut StalledSink, Message::Text("clear".into())),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Ok(Err(VoiceError::Timeout("twilio_write")))
+        ));
     }
 }

@@ -24,6 +24,29 @@ use crate::voice::turn::{DraftTurn, is_backchannel};
 
 const MAX_STT_RECONNECTS: u32 = 3;
 
+// JoinHandle detaches on drop; a response belongs to its call even when the
+// owning session future is cancelled rather than returning normally.
+struct ResponseTask(JoinHandle<()>);
+impl ResponseTask {
+    fn abort(&self) {
+        self.0.abort();
+    }
+}
+impl std::future::Future for ResponseTask {
+    type Output = Result<(), tokio::task::JoinError>;
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.0).poll(cx)
+    }
+}
+impl Drop for ResponseTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// A spawned voice session together with the channels used to drive it.
 /// Shared by every channel (Twilio) that bridges a transport
 /// socket onto `run_voice_session_with_playback`.
@@ -68,6 +91,8 @@ pub async fn shutdown_playback_session(
             .is_err()
     {
         task.abort();
+        // Run cancellation destructors before completing the conversation.
+        let _ = task.await;
     }
     let _ = providers.agent.complete(context).await;
 }
@@ -108,7 +133,7 @@ pub async fn run_voice_session_with_playback(
     let mut response_number = 0u64;
     let mut draft = DraftTurn::default();
     let mut draft_timing: Option<TurnTiming> = None;
-    let mut active_response: Option<JoinHandle<()>> = None;
+    let mut active_response: Option<ResponseTask> = None;
     let mut settle_at: Option<tokio::time::Instant> = None;
     let mut dispatched: Option<(DraftTurn, TurnTiming)> = None;
 
@@ -118,6 +143,7 @@ pub async fn run_voice_session_with_playback(
     let mut completeness_rx: Option<mpsc::Receiver<f64>> = None;
     let mut settle_origin: Option<tokio::time::Instant> = None;
 
+    let result = async {
     if let Some(instruction) = context.initiation_context.clone() {
         context.turn_id = Some(uuid::Uuid::new_v4().to_string());
         context.revision = Some(0);
@@ -136,7 +162,7 @@ pub async fn run_voice_session_with_playback(
             last_transcript_received_at: std::time::Instant::now(),
         };
         dispatched = Some((DraftTurn::default(), timing.clone()));
-        active_response = Some(spawn_response(
+        active_response = Some(ResponseTask(spawn_response(
             response_number,
             context.clone(),
             instruction,
@@ -150,7 +176,7 @@ pub async fn run_voice_session_with_playback(
             audio_playing.clone(),
             answer_started.clone(),
             playback.clone(),
-        ));
+        )));
     }
 
     let stt_started = std::time::Instant::now();
@@ -349,7 +375,19 @@ pub async fn run_voice_session_with_playback(
                         tokio::time::sleep(std::time::Duration::from_millis(250 * u64::from(stt_reconnects))).await;
                         report.stt_reconnects += 1;
                         let reconnect_started = std::time::Instant::now();
-                        stt = providers.stt.connect().await?;
+                        loop {
+                            match providers.stt.connect().await {
+                                Ok(next) => { stt = next; break; }
+                                Err(error) => {
+                                    report.stt_errors += 1;
+                                    tracing::warn!(attempt = stt_reconnects, error_kind = error.kind(), "VOICE_STT_RECONNECT_FAILED");
+                                    if stt_reconnects >= MAX_STT_RECONNECTS { return Err(error); }
+                                    stt_reconnects += 1;
+                                    report.stt_reconnects += 1;
+                                    tokio::time::sleep(std::time::Duration::from_millis(250 * u64::from(stt_reconnects))).await;
+                                }
+                            }
+                        }
                         tracing::info!(attempt = stt_reconnects, connect_ms = reconnect_started.elapsed().as_millis() as u64, "VOICE_STT_RECONNECTED");
                     }
                 }
@@ -403,7 +441,7 @@ pub async fn run_voice_session_with_playback(
                 playback.begin();
                 answer_started.store(false, std::sync::atomic::Ordering::SeqCst);
                 dispatched = Some((turn.clone(), timing.clone()));
-                active_response = Some(spawn_response(
+                active_response = Some(ResponseTask(spawn_response(
                     response_number,
                     context.clone(),
                     turn.text,
@@ -417,7 +455,7 @@ pub async fn run_voice_session_with_playback(
                     audio_playing.clone(),
                     answer_started.clone(),
                     playback.clone(),
-                ));
+                )));
             }
             signal = signal_rx.recv() => {
                 match signal {
@@ -435,18 +473,25 @@ pub async fn run_voice_session_with_playback(
         }
     }
 
+    Ok(())
+    }.await;
+
     if let Some(task) = active_response.take() {
         task.abort();
         let _ = task.await;
     }
 
-    report.outcome = "completed";
+    report.outcome = if result.is_ok() {
+        "completed"
+    } else {
+        "failed"
+    };
     tracing::info!(
         session_ms = session_started.elapsed().as_millis() as u64,
         responses = response_number,
         "VOICE_SESSION_ENDED"
     );
-    Ok(())
+    result
 }
 
 struct SessionReport {
