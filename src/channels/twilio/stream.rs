@@ -1,6 +1,3 @@
-/**
-* this file code contains twilio websocket audio stream handling
-*/
 use axum::{
     extract::{
         State, WebSocketUpgrade,
@@ -135,7 +132,6 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         turn_id: None,
         revision: None,
         tts_provider: Some(profile.tts.provider.clone()),
-        filler: None,
         outbound: accepted_call.action_id.is_some(),
     };
     let providers = state.voice.providers.providers_for(&profile)?;

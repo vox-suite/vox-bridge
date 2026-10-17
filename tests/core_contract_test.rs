@@ -1,6 +1,3 @@
-/**
-* this file code contains tests for vox core protocol and authentication
-*/
 use vox_bridge::channels::context::CallContext;
 
 #[test]
@@ -13,7 +10,6 @@ fn builds_call_context_identity() {
         turn_id: None,
         revision: None,
         tts_provider: Some("elevenlabs".into()),
-        filler: None,
         outbound: false,
     };
     assert_eq!(ctx.channel, "voice");

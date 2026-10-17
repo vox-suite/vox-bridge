@@ -1,6 +1,3 @@
-/**
-* tests for channel durable tasks, proposals, narration, handoff, and uncertainty handling
-*/
 use axum::{Json, Router, extract::Path, http::StatusCode, routing::post};
 use serde_json::json;
 use std::sync::Arc;
@@ -86,7 +83,7 @@ fn test_proposal_narrator_includes_material_details_and_disclaimers() {
     assert!(narration.contains("45000.00 INR"));
     assert!(narration.contains("2026-09-25 07:00 IST"));
     assert!(narration.contains("2026-09-24T12:00:00Z"));
-    // Disclosures required by PRD and execution order
+
     assert!(narration.contains("explicit approval"));
     assert!(narration.contains("cannot execute this action independently"));
     assert!(narration.contains("Core coordinates execution"));
@@ -106,7 +103,7 @@ fn test_handoff_narrator_explicitly_discloses_non_completion() {
     assert!(narration.contains(&task_id.to_string()));
     assert!(narration.contains("Human Concierge Specialist"));
     assert!(narration.contains("Custom billing"));
-    // Explicit disclosure required by E28
+
     assert!(narration.contains("NOT completed"));
     assert!(narration.contains("Bridge does not claim completion"));
 }
@@ -200,15 +197,12 @@ async fn test_sender_verification_blocks_unauthorized_parties() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 
-    // Valid sender
     assert!(ChannelInteractionHandler::verify_sender(&context, "+15551234567").is_ok());
     assert!(ChannelInteractionHandler::verify_sender(&context, "15551234567").is_ok());
 
-    // Wrong sender trying to forge approval
     let err = ChannelInteractionHandler::verify_sender(&context, "+19998887777").unwrap_err();
     match err {
         ChannelInteractionError::UnauthorizedSender(sender) => {
@@ -226,7 +220,6 @@ async fn test_cannot_forge_approval_when_core_rejects_expired_or_changed_proposa
         "/v1/action-proposals/{id}/approve",
         post(
             |Path(_id): Path<Uuid>, Json(_body): Json<ApproveRequestBody>| async {
-                // Core returns 409 Conflict when proposal has expired or changed
                 (
                     StatusCode::CONFLICT,
                     "proposal has expired or was superseded",
@@ -256,7 +249,6 @@ async fn test_cannot_forge_approval_when_core_rejects_expired_or_changed_proposa
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 
@@ -283,7 +275,6 @@ async fn test_cannot_forge_approval_when_core_rejects_expired_or_changed_proposa
 async fn test_cannot_report_success_independently_when_core_is_unreachable() {
     let proposal_id = Uuid::new_v4();
 
-    // Use a port where no server is listening
     let client = CoreClient::new("http://127.0.0.1:59999".into(), "test-token".into())
         .unwrap()
         .with_host_trust(
@@ -299,7 +290,6 @@ async fn test_cannot_report_success_independently_when_core_is_unreachable() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 
@@ -312,7 +302,6 @@ async fn test_cannot_report_success_independently_when_core_is_unreachable() {
     )
     .await;
 
-    // Must fail closed with unconfirmed outcome, never forge success
     assert!(result.is_err());
     match result.unwrap_err() {
         ChannelInteractionError::CoreError(msg) => {
@@ -373,11 +362,9 @@ async fn test_reconnect_and_status_command_fetches_authoritative_run_state() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 
-    // First query: on session start
     let status1 =
         ChannelInteractionHandler::handle_status(&client, &context, "user-host-123", task_id)
             .await
@@ -386,7 +373,6 @@ async fn test_reconnect_and_status_command_fetches_authoritative_run_state() {
     assert!(status1.contains("Book train tickets"));
     assert!(status1.contains("waiting for your explicit approval"));
 
-    // User disconnects and reconnects, issuing status query again
     let status2 =
         ChannelInteractionHandler::handle_status(&client, &context, "user-host-123", task_id)
             .await
@@ -433,7 +419,6 @@ async fn test_duplicate_decision_reports_duplicate_safely() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 

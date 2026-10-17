@@ -58,7 +58,6 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
         turn_id: None,
         revision: None,
         tts_provider: Some(profile.tts.provider),
-        filler: None,
         outbound: false,
     };
     let mut handle = spawn_playback_session(providers.clone(), context.clone());

@@ -97,7 +97,6 @@ async fn run_scenario(
             turn_id: Some("turn".into()),
             revision: Some(0),
             tts_provider: None,
-            filler: None,
             outbound: false,
         },
         "Weather in Chennai?".into(),

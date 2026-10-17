@@ -1,6 +1,3 @@
-/**
-* this file code contains call and conversation channel context structures
-*/
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelIdentity {
     pub channel: String,
@@ -16,7 +13,6 @@ pub struct CallContext {
     pub turn_id: Option<String>,
     pub revision: Option<u64>,
     pub tts_provider: Option<String>,
-    pub filler: Option<String>,
     pub outbound: bool,
 }
 

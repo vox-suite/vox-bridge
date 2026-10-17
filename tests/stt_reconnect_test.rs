@@ -1,6 +1,3 @@
-/**
-* this file code contains a regression test for STT stream loss during a voice session
-*/
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::sync::Arc;
@@ -14,7 +11,6 @@ use vox_bridge::providers::tts::{AudioStream, TtsProvider};
 use vox_bridge::voice::provider::{ConversationClient, VoiceError, VoiceProviders};
 use vox_bridge::voice::session::run_voice_session;
 
-/// Every session it hands out is already closed.
 struct ClosedStt(Arc<AtomicU32>);
 struct ClosedSession;
 
@@ -73,7 +69,6 @@ async fn closed_stt_stream_reconnects_then_ends_instead_of_spinning() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
     let (_input_tx, input_rx) = mpsc::channel(8);
@@ -87,6 +82,6 @@ async fn closed_stt_stream_reconnects_then_ends_instead_of_spinning() {
     .expect("session must end, not spin forever on a closed STT stream");
 
     assert!(result.is_err());
-    // Initial connect plus three reconnect attempts.
+
     assert_eq!(connects.load(Ordering::SeqCst), 4);
 }

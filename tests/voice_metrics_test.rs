@@ -38,7 +38,6 @@ fn core_wait_is_not_reported_as_provider_llm_ttft() {
         turn_id: Some("turn-1".into()),
         revision: Some(2),
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
     tracing::subscriber::with_default(subscriber, || {
@@ -103,7 +102,6 @@ async fn aborted_response_reports_cancellation_with_turn_correlation() {
         turn_id: Some("greeting-1".into()),
         revision: Some(0),
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
     let playback = Arc::new(PlaybackState::new());

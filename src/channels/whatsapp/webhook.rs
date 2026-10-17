@@ -1,6 +1,3 @@
-/**
-* this file code contains whatsapp webhook verification and receipt handlers
-*/
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -150,7 +147,6 @@ pub async fn wa_receive(
                                 turn_id: None,
                                 revision: None,
                                 tts_provider: None,
-                                filler: None,
                                 outbound: false,
                             };
                             if crate::channels::notifications::is_opt_out_keyword(&body) {

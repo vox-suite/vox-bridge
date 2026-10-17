@@ -1,12 +1,3 @@
-/**
- * Channel Acceptance Suite for Voice and Messaging Channels (E49 / vox-bridge#4).
- *
- * Verifies Platform V1 criteria:
- * 1. Realistic channel tests cover authentication failure, interruption, reconnect, notification, and unknown outcome.
- * 2. No test relies on paid provider behavior without an explicit live-test mode (VOX_LIVE_CHANNEL_TEST=1).
- * 3. Channel results strictly agree with authoritative Core state.
- * 4. Invariants: Non-action authority in reminders, truthful delivery (no seen inference), sensitive content redaction.
- */
 use axum::{
     Json, Router,
     body::Body,
@@ -48,7 +39,6 @@ use vox_bridge::{
     voice::turn::DraftTurn,
 };
 
-/// Mock Messaging Client for hermetic testing without paid provider dependencies
 struct MockMessaging {
     pub send_count: AtomicUsize,
 }
@@ -61,7 +51,6 @@ impl MessagingClient for MockMessaging {
     }
 }
 
-/// Helper to construct a test AppState with mock components
 fn setup_test_app() -> (Arc<AppState>, axum::Router) {
     let twilio = Arc::new(DashMap::new());
     let config = VoiceConfig::from_values(|k| match k {
@@ -106,15 +95,10 @@ fn setup_test_app() -> (Arc<AppState>, axum::Router) {
     (state, router)
 }
 
-// ==============================================================================
-// 1. AUTHENTICATION FAILURE ACROSS ALL CHANNELS
-// ==============================================================================
-
 #[tokio::test]
 async fn test_channel_auth_failure_voice_and_messaging_fails_closed() {
     let (_state, router) = setup_test_app();
 
-    // 1. Voice Ingress: Missing Twilio signature fails closed (401 Unauthorized)
     let voice_req_missing = Request::builder()
         .method("POST")
         .uri("/bridge/twilio/voice")
@@ -129,7 +113,6 @@ async fn test_channel_auth_failure_voice_and_messaging_fails_closed() {
         "Voice webhook without Twilio signature header must return 401 Unauthorized"
     );
 
-    // Voice Ingress: Invalid Twilio signature fails closed (403 Forbidden)
     let voice_req_invalid = Request::builder()
         .method("POST")
         .uri("/bridge/twilio/voice")
@@ -147,7 +130,6 @@ async fn test_channel_auth_failure_voice_and_messaging_fails_closed() {
         "Voice webhook with invalid Twilio signature must return 403 Forbidden"
     );
 
-    // 2. Messaging Ingress (WhatsApp): Missing or invalid Meta signature fails closed (403)
     let wa_req = Request::builder()
         .method("POST")
         .uri("/bridge/wa")
@@ -168,7 +150,6 @@ async fn test_channel_auth_failure_voice_and_messaging_fails_closed() {
         "WhatsApp webhook without valid X-Hub-Signature-256 must return 403 Forbidden"
     );
 
-    // 4. Sender Identity Mismatch: Unauthorized sender trying to approve proposal is blocked
     let context = CallContext {
         channel: "whatsapp".into(),
         external_identity: "+15551234567".into(),
@@ -177,7 +158,6 @@ async fn test_channel_auth_failure_voice_and_messaging_fails_closed() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 
@@ -191,58 +171,43 @@ async fn test_channel_auth_failure_voice_and_messaging_fails_closed() {
     }
 }
 
-// ==============================================================================
-// 2. VOICE INTERRUPTION & BARGE-IN
-// ==============================================================================
-
 #[test]
 fn test_voice_interruption_barge_in_and_playback_invalidation() {
     let playback = PlaybackState::new();
     assert_eq!(playback.current_generation(), 0);
     assert!(!playback.is_playing());
 
-    // Agent begins playing response chunk (generation 1)
     let gen1 = playback.begin();
     assert_eq!(gen1, 1);
     assert!(playback.is_playing());
     assert!(playback.accepts(1));
 
-    // Human speaks (barge-in detected) -> invalidate previous playback
     let gen2 = playback.invalidate();
     assert_eq!(gen2, 2);
     assert!(!playback.is_playing());
 
-    // Inflight audio chunks for generation 1 MUST be discarded
     assert!(
         !playback.accepts(gen1),
         "Barge-in must invalidate previous audio generation"
     );
 
-    // CallCommand::Clear must serialize cleanly to flush provider buffer
     let clear_msg = serialize_command("test-stream-sid", &CallCommand::Clear).unwrap();
     assert!(clear_msg.contains("\"event\":\"clear\""));
     assert!(clear_msg.contains("\"streamSid\":\"test-stream-sid\""));
 
-    // Turn state resets on human correction
     let mut turn = DraftTurn::default();
     turn.finish("book flight to Seattle");
     assert_eq!(turn.snapshot(), "book flight to Seattle");
 
-    // Human interrupts with correction:
     turn.finish("no, book flight to Portland instead");
     assert_eq!(turn.snapshot(), "no, book flight to Portland instead");
 }
-
-// ==============================================================================
-// 3. CHANNEL RECONNECT & AUTHORITATIVE CORE STATE SYNCHRONIZATION
-// ==============================================================================
 
 #[tokio::test]
 async fn test_channel_reconnect_synchronizes_authoritative_core_state() {
     let task_id = Uuid::new_v4();
     let run_id = Uuid::new_v4();
 
-    // Spawn mock Core server returning authoritative task state on POST /v1/durable-tasks/{id}
     let app = Router::new().route(
         "/v1/durable-tasks/{id}",
         post({
@@ -283,31 +248,23 @@ async fn test_channel_reconnect_synchronizes_authoritative_core_state() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 
-    // Caller reconnects after dropped call and asks: "status"
     let status_narrative =
         ChannelInteractionHandler::handle_status(&client, &context, "+15551234567", task_id)
             .await
             .unwrap();
 
-    // Must agree with Core authoritative state
     assert!(status_narrative.contains("Book Lodging in Seattle"));
     assert!(status_narrative.contains("waiting for your explicit approval"));
     assert!(status_narrative.contains(&task_id.to_string()));
 }
 
-// ==============================================================================
-// 4. NOTIFICATION DELIVERY: TRUTHFUL CHANNEL RECEIPT & NON-ACTION AUTHORITY
-// ==============================================================================
-
 #[tokio::test]
 async fn test_notification_delivery_truthful_channel_receipt_and_no_seen_claim() {
     let (_state, router) = setup_test_app();
 
-    // 1. INVARIANT 1: Action authority injection MUST be rejected with 403
     let forbidden_payload = json!({
         "reminder_id": Uuid::new_v4(),
         "channel": "whatsapp",
@@ -336,7 +293,6 @@ async fn test_notification_delivery_truthful_channel_receipt_and_no_seen_claim()
         "Notifications embedding action authority must fail closed with 403"
     );
 
-    // 2. INVARIANT 2: Truthful delivery reports delivered_to_channel, NEVER seen or confirmed read
     let reminder_id = Uuid::new_v4();
     let valid_payload = json!({
         "reminder_id": reminder_id,
@@ -365,7 +321,7 @@ async fn test_notification_delivery_truthful_channel_receipt_and_no_seen_claim()
 
     assert_eq!(resp.status, "delivered_to_channel");
     assert!(resp.delivered_to_channel_at.is_some());
-    // Invariant: truthful delivery status string NEVER contains "seen" or "read"
+
     assert!(
         !resp.status.contains("seen"),
         "Truthful delivery must not claim seen"
@@ -376,17 +332,12 @@ async fn test_notification_delivery_truthful_channel_receipt_and_no_seen_claim()
     );
 }
 
-// ==============================================================================
-// 5. CONSEQUENTIAL PROPOSAL APPROVAL, SUPERSEDED REJECTION, & DUPLICATE DECISION
-// ==============================================================================
-
 #[tokio::test]
 async fn test_consequential_approval_changed_proposal_and_duplicate_decision() {
     let proposal_id = Uuid::new_v4();
     let call_count = Arc::new(AtomicUsize::new(0));
     let call_count_clone = call_count.clone();
 
-    // Mock Core returning 200 on first call, 409 Conflict on second (consumed/duplicate)
     let app = Router::new().route(
         "/v1/action-proposals/{id}/approve",
         post({
@@ -409,7 +360,6 @@ async fn test_consequential_approval_changed_proposal_and_duplicate_decision() {
                             })),
                         )
                     } else {
-                        // Core rejects duplicate or consumed decision
                         (
                             StatusCode::CONFLICT,
                             Json(json!({
@@ -443,11 +393,9 @@ async fn test_consequential_approval_changed_proposal_and_duplicate_decision() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 
-    // First decision: exact match approved
     let first_res = ChannelInteractionHandler::handle_approve(
         &client,
         &context,
@@ -462,7 +410,6 @@ async fn test_consequential_approval_changed_proposal_and_duplicate_decision() {
     assert!(msg.contains("has been approved"));
     assert!(msg.contains("Core is coordinating execution"));
 
-    // Second decision: duplicate attempt fails closed with DuplicateDecision
     let second_res = ChannelInteractionHandler::handle_approve(
         &client,
         &context,
@@ -481,15 +428,10 @@ async fn test_consequential_approval_changed_proposal_and_duplicate_decision() {
     }
 }
 
-// ==============================================================================
-// 6. UNKNOWN OUTCOME & CORE UNREACHABLE FAIL CLOSED
-// ==============================================================================
-
 #[tokio::test]
 async fn test_unknown_outcome_and_core_unreachable_fail_closed() {
     let proposal_id = Uuid::new_v4();
 
-    // Port with no listener -> communication failure
     let client = CoreClient::new("http://127.0.0.1:59998".into(), "test-token".into())
         .unwrap()
         .with_host_trust(
@@ -505,7 +447,6 @@ async fn test_unknown_outcome_and_core_unreachable_fail_closed() {
         turn_id: None,
         revision: None,
         tts_provider: None,
-        filler: None,
         outbound: false,
     };
 
@@ -520,7 +461,6 @@ async fn test_unknown_outcome_and_core_unreachable_fail_closed() {
 
     assert!(result.is_err(), "Must fail closed when Core is unreachable");
 
-    // Uncertainty narrator explicitly tells the user that the run state is unconfirmed
     let uncertainty = UncertaintyNarrator::unconfirmed_outcome(
         "hotel reservation booking",
         "Core timeout on port 59998",
@@ -531,26 +471,14 @@ async fn test_unknown_outcome_and_core_unreachable_fail_closed() {
     assert!(uncertainty.contains("app.callvox.in"));
 }
 
-// ==============================================================================
-// 7. NO PAID PROVIDER CALLS WITHOUT EXPLICIT LIVE-TEST MODE
-// ==============================================================================
-
 #[test]
 fn test_no_paid_provider_calls_without_explicit_live_test_mode() {
-    // In standard CI/test runs, VOX_LIVE_CHANNEL_TEST must be absent or false
     let live_enabled = is_live_channel_test_enabled();
     assert!(
         !live_enabled,
         "By default, live paid provider tests must be disabled"
     );
-
-    // Override parsing is covered by the pure configuration unit test.
-    // Mutating process environment here would race concurrent network tests.
 }
-
-// ==============================================================================
-// 8. SENSITIVE CONTENT REDACTION & PRIVACY INVARIANTS
-// ==============================================================================
 
 #[test]
 fn test_sensitive_content_redaction_and_privacy_invariants() {
@@ -563,10 +491,6 @@ fn test_sensitive_content_redaction_and_privacy_invariants() {
     assert!(redacted.contains("[REDACTED_CARD]"));
 }
 
-// ==============================================================================
-// 9. LABELLED HANDOFF NARRATION EXPLICITLY DISCLOSES NON-COMPLETION
-// ==============================================================================
-
 #[test]
 fn test_labelled_handoff_narration_discloses_non_completion() {
     let task_id = Uuid::new_v4();
@@ -577,17 +501,12 @@ fn test_labelled_handoff_narration_discloses_non_completion() {
         "https://amazon.com/gp/cart/view.html?ref=vox",
     );
 
-    // Strict invariant: Handoff MUST disclose that action was not completed by Vox
     assert!(handoff_text.contains("is NOT completed"));
     assert!(handoff_text.contains("Bridge does not claim completion"));
     assert!(handoff_text.contains("Amazon MacBook Cart"));
     assert!(handoff_text.contains("amazon"));
     assert!(handoff_text.contains("https://amazon.com/gp/cart/view.html?ref=vox"));
 }
-
-// ==============================================================================
-// 10. OPT-OUT & OPT-IN LIFECYCLE
-// ==============================================================================
 
 #[test]
 fn test_opt_out_and_opt_in_lifecycle() {

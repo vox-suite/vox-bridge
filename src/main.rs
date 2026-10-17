@@ -1,6 +1,3 @@
-/**
-* this file code contains bridge application entry point
-*/
 use dashmap::DashMap;
 use std::sync::Arc;
 
@@ -8,7 +5,6 @@ use vox_bridge::channels::twilio::{TwilioApiClient, VOICE_STATUS_URL, VOICE_STRE
 use vox_bridge::core::client::CoreClient;
 use vox_bridge::providers::telephony::TelephonyClient;
 use vox_bridge::voice::config::VoiceConfig;
-use vox_bridge::voice::filler::prewarm_fillers;
 use vox_bridge::voice::registry::VoiceRuntime;
 use vox_bridge::{AppState, app};
 
@@ -39,11 +35,6 @@ async fn main() {
         VoiceRuntime::from_config(voice_config)
             .expect("voice provider runtime initialization failed"),
     );
-
-    let profile = voice.resolver.resolve();
-    if let Ok(providers) = voice.providers.providers_for(&profile) {
-        prewarm_fillers(providers.tts.clone());
-    }
 
     let twilio_account_sid = std::env::var("TWILIO_ACCOUNT_SID").unwrap_or_default();
     let twilio_auth_token =

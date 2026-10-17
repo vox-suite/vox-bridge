@@ -1,6 +1,3 @@
-/**
-* this file code contains core client implementation for conversation api, durable tasks, and proposals
-*/
 use async_trait::async_trait;
 use futures_util::{StreamExt, stream};
 use hmac::{Hmac, Mac};
@@ -582,7 +579,6 @@ impl ConversationClient for CoreClient {
                 .tts_provider
                 .as_deref()
                 .or(self.tts_provider.as_deref()),
-            filler: context.filler.as_deref(),
             outbound: context.outbound,
         };
         let response = self
@@ -640,7 +636,6 @@ impl ConversationClient for CoreClient {
                 .tts_provider
                 .as_deref()
                 .or(self.tts_provider.as_deref()),
-            filler: context.filler.as_deref(),
             outbound: context.outbound,
         };
         let request = self

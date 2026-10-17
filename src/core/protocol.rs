@@ -1,6 +1,3 @@
-/**
-* this file code contains core communication protocol structures
-*/
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -25,8 +22,6 @@ pub struct RespondRequest<'a> {
     pub revision: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tts_provider: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filler: Option<&'a str>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub outbound: bool,
 }
