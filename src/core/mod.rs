@@ -57,6 +57,16 @@ pub trait ConversationClient: Send + Sync {
     async fn complete(&self, _context: &CallContext) -> Result<(), VoiceError> {
         Ok(())
     }
+
+    async fn interrupted(
+        &self,
+        _context: &CallContext,
+        _prompt: &str,
+        _reply: &str,
+        _heard: &str,
+    ) -> Result<(), VoiceError> {
+        Ok(())
+    }
 }
 
 pub use ConversationClient as AgentProvider;

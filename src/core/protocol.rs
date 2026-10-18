@@ -39,6 +39,17 @@ pub struct CompleteRequest<'a> {
     pub external_conversation_id: &'a str,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InterruptedRequest<'a> {
+    pub host_context: HostContextRequest,
+    pub agent_external_key: &'a str,
+    pub identity: IdentityPayload<'a>,
+    pub external_conversation_id: &'a str,
+    pub text: &'a str,
+    pub reply: &'a str,
+    pub heard: &'a str,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HostContextRequest {
     pub host_user_id: String,

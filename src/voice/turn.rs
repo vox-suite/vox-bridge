@@ -139,5 +139,52 @@ pub fn is_backchannel(text: &str) -> bool {
             | "sure"
             | "cool"
             | "fine"
+            | "uh"
+            | "um"
+            | "umm"
+            | "hmm"
+            | "hm"
+            | "ah"
+            | "oh"
+            | "erm"
+            | "mm"
     )
+}
+
+fn words(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split_whitespace()
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+}
+
+pub fn word_count(text: &str) -> usize {
+    words(text).count()
+}
+
+pub fn is_stop_request(text: &str) -> bool {
+    words(text).next().is_some_and(|word| {
+        matches!(
+            word.as_str(),
+            "stop"
+                | "wait"
+                | "no"
+                | "hold"
+                | "hey"
+                | "cancel"
+                | "sorry"
+                | "actually"
+                | "excuse"
+                | "pause"
+        )
+    })
+}
+
+pub fn is_echo(text: &str, recent_speech: &str) -> bool {
+    let spoken: std::collections::HashSet<String> = words(recent_speech).collect();
+    let heard: Vec<String> = words(text).collect();
+    heard.len() >= 2
+        && heard.iter().filter(|word| spoken.contains(*word)).count() * 5 >= heard.len() * 4
 }

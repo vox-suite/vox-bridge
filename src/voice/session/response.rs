@@ -258,6 +258,7 @@ async fn stream_response(
             if player_playback.accepts(generation)
                 && (first_audio_sent_at.is_some() || filler_audio_at.is_some())
             {
+                player_playback.note_complete(generation);
                 let _ = player_output
                     .send(CallCommand::Mark {
                         name: response_mark,
@@ -372,6 +373,7 @@ async fn stream_response(
         }
         acknowledgement_done = true;
         full_response.push_str(&chunk);
+        playback.note_reply(generation, &chunk);
 
         let sentences = chunker.push(&chunk);
         for sentence in sentences {
@@ -489,6 +491,7 @@ async fn speak_apology(
         audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
         return;
     }
+    playback.note_complete(generation);
     let _ = output
         .send(CallCommand::Mark {
             name: format!("response-{number}"),
@@ -520,6 +523,7 @@ async fn play_sentence(
         report.outcome = "failed";
     })?;
     report.headers_ms = Some(report.started.elapsed().as_millis() as u64);
+    playback.note_sentence(generation, (kind == AudioKind::Answer).then_some(text));
     let mut ttfb_ms = 0;
     let mut is_first_chunk = true;
 
@@ -552,6 +556,7 @@ async fn play_sentence(
                 .get_or_insert(tts_start.elapsed().as_millis() as u64);
         }
         let queued_at = std::time::Instant::now();
+        playback.note_queued(generation, chunk_bytes.len());
         output
             .send(CallCommand::Media {
                 bytes: chunk_bytes,

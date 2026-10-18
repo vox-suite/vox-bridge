@@ -115,4 +115,25 @@ impl ConversationClient for DesktopConversationClient {
             .map_err(|_| error("completion_rejected"))?;
         Ok(())
     }
+    async fn interrupted(
+        &self,
+        _: &CallContext,
+        prompt: &str,
+        reply: &str,
+        heard: &str,
+    ) -> Result<(), VoiceError> {
+        self.client
+            .post(format!(
+                "{}/internal/v1/desktop-voice/{}/interrupted",
+                self.base, self.session
+            ))
+            .bearer_auth(&self.token)
+            .json(&json!({"text":prompt,"reply":reply,"heard":heard}))
+            .send()
+            .await
+            .map_err(|_| error("interruption_unavailable"))?
+            .error_for_status()
+            .map_err(|_| error("interruption_rejected"))?;
+        Ok(())
+    }
 }

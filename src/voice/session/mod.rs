@@ -7,8 +7,10 @@ pub mod playback;
 pub mod response;
 
 pub use mod_types::{AudioKind, CallCommand, CallEvent, SessionSignal};
+use playback::PACING_LOOKAHEAD;
 pub use playback::PlaybackState;
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tokio::sync::mpsc;
@@ -20,9 +22,11 @@ use crate::providers::stt::SttEvent;
 use crate::voice::metrics::TurnTiming;
 use crate::voice::provider::{VoiceError, VoiceProviders};
 use crate::voice::session::response::spawn_response;
-use crate::voice::turn::{DraftTurn, is_backchannel};
+use crate::voice::turn::{DraftTurn, is_backchannel, is_echo, is_stop_request, word_count};
 
 const MAX_STT_RECONNECTS: u32 = 3;
+const HOLD_CONFIRM_WINDOW: std::time::Duration = std::time::Duration::from_millis(1200);
+const HOLD_EXTENSION: std::time::Duration = std::time::Duration::from_millis(600);
 
 // JoinHandle detaches on drop; a response belongs to its call even when the
 // owning session future is cancelled rather than returning normally.
@@ -63,11 +67,13 @@ pub fn spawn_playback_session(
 ) -> VoiceSessionHandle {
     let playback = Arc::new(PlaybackState::new());
     let (input_tx, input_rx) = mpsc::channel(64);
+    let (session_tx, session_rx) = mpsc::channel(64);
     let (output_tx, output_rx) = mpsc::channel(64);
     let span =
         tracing::info_span!("voice_session", conversation_id = %context.external_conversation_id);
+    tokio::spawn(pace_output(session_rx, output_tx, playback.clone()).instrument(span.clone()));
     let task = tokio::spawn(
-        run_voice_session_with_playback(providers, context, input_rx, output_tx, playback.clone())
+        run_voice_session_with_playback(providers, context, input_rx, session_tx, playback.clone())
             .instrument(span),
     );
     VoiceSessionHandle {
@@ -76,6 +82,138 @@ pub fn spawn_playback_session(
         output: output_rx,
         task,
     }
+}
+
+const PACING_SLICE: usize = 800;
+
+async fn pace_output(
+    mut input: mpsc::Receiver<CallCommand>,
+    output: mpsc::Sender<CallCommand>,
+    playback: Arc<PlaybackState>,
+) {
+    let mut pending: VecDeque<CallCommand> = VecDeque::new();
+    let mut recent: VecDeque<(u64, CallCommand)> = VecDeque::new();
+    let mut cleared_for_hold = false;
+    loop {
+        let generation = playback.current_generation();
+        pending.retain(|command| command_generation(command).is_none_or(|g| g == generation));
+        recent.retain(|(_, command)| command_generation(command) == Some(generation));
+        if playback.is_held() {
+            if !cleared_for_hold {
+                cleared_for_hold = true;
+                let played = playback.rewind(generation).unwrap_or(0);
+                while let Some((start, command)) = recent.pop_back() {
+                    match command {
+                        CallCommand::Media {
+                            bytes,
+                            generation,
+                            kind,
+                            queued_at,
+                            latency_origin_at,
+                        } if start + bytes.len() as u64 > played => {
+                            let skip = played.saturating_sub(start) as usize;
+                            pending.push_front(CallCommand::Media {
+                                bytes: bytes.slice(skip..),
+                                generation,
+                                kind,
+                                queued_at,
+                                latency_origin_at,
+                            });
+                        }
+                        CallCommand::Mark { .. } => pending.push_front(command),
+                        _ => {}
+                    }
+                }
+                if output.send(CallCommand::Clear).await.is_err() {
+                    return;
+                }
+            }
+        } else {
+            cleared_for_hold = false;
+            while let Some(front) = pending.front() {
+                if let CallCommand::Media { generation, .. } = front
+                    && !playback.pacing_delay(*generation).is_zero()
+                {
+                    break;
+                }
+                let command = pending.pop_front().unwrap();
+                let start = match &command {
+                    CallCommand::Media {
+                        bytes, generation, ..
+                    } => playback.note_forwarded(*generation, bytes.len()),
+                    _ => 0,
+                };
+                if output.send(command.clone()).await.is_err() {
+                    return;
+                }
+                recent.push_back((start, command));
+            }
+            let played = playback.played(generation).unwrap_or(0);
+            recent.retain(|(start, command)| match command {
+                CallCommand::Media { bytes, .. } => start + bytes.len() as u64 > played,
+                _ => true,
+            });
+        }
+        let waiting = !pending.is_empty() || playback.is_held();
+        tokio::select! {
+            command = input.recv() => match command {
+                None => return,
+                Some(CallCommand::Clear) => {
+                    recent.clear();
+                    if output.send(CallCommand::Clear).await.is_err() {
+                        return;
+                    }
+                }
+                Some(CallCommand::Media { bytes, generation, kind, queued_at, latency_origin_at }) => {
+                    for offset in (0..bytes.len()).step_by(PACING_SLICE) {
+                        pending.push_back(CallCommand::Media {
+                            bytes: bytes.slice(offset..(offset + PACING_SLICE).min(bytes.len())),
+                            generation,
+                            kind,
+                            queued_at,
+                            latency_origin_at,
+                        });
+                    }
+                }
+                Some(mark) => pending.push_back(mark),
+            },
+            _ = tokio::time::sleep(PACING_LOOKAHEAD / 25), if waiting => {}
+        }
+    }
+}
+
+fn command_generation(command: &CallCommand) -> Option<u64> {
+    match command {
+        CallCommand::Media { generation, .. } | CallCommand::Mark { generation, .. } => {
+            Some(*generation)
+        }
+        CallCommand::Clear => None,
+    }
+}
+
+fn report_interruption(
+    providers: &VoiceProviders,
+    context: &CallContext,
+    playback: &PlaybackState,
+    prompt: &str,
+) -> Option<JoinHandle<()>> {
+    let (reply, heard) = playback.heard()?;
+    tracing::info!(
+        reply_bytes = reply.len(),
+        heard_bytes = heard.len(),
+        "VOICE_INTERRUPTION_HEARD"
+    );
+    let agent = providers.agent.clone();
+    let context = context.clone();
+    let prompt = prompt.to_owned();
+    Some(tokio::spawn(async move {
+        if let Err(error) = agent.interrupted(&context, &prompt, &reply, &heard).await {
+            tracing::warn!(
+                error_kind = error.kind(),
+                "VOICE_INTERRUPTION_REPORT_FAILED"
+            );
+        }
+    }))
 }
 
 /// Waits briefly for the session task to wind down on its own, then aborts it,
@@ -142,6 +280,10 @@ pub async fn run_voice_session_with_playback(
     let mut activity = crate::voice::audio::voice_activity::VoiceActivity::default();
     let mut completeness_rx: Option<mpsc::Receiver<f64>> = None;
     let mut settle_origin: Option<tokio::time::Instant> = None;
+    let mut last_prompt = String::new();
+    let mut pending_report: Option<JoinHandle<()>> = None;
+    let mut hold_until: Option<tokio::time::Instant> = None;
+    let mut vad_barge_in = true;
 
     let result = async {
     if let Some(instruction) = context.initiation_context.clone() {
@@ -210,6 +352,11 @@ pub async fn run_voice_session_with_playback(
                             settle_at = None;
                             tracing::info!(detector = "earshot", "VOICE_SPEECH_STARTED");
                         }
+                        if detected.started && vad_barge_in && audio_playing.load(std::sync::atomic::Ordering::SeqCst) && playback.hold() {
+                            hold_until = Some(tokio::time::Instant::now() + HOLD_CONFIRM_WINDOW);
+                            report.holds += 1;
+                            tracing::info!(generation = playback.current_generation(), "VOICE_PLAYBACK_HELD");
+                        }
                         let send_started = std::time::Instant::now();
                         if let Err(err) = stt.send_audio(bytes).await {
                             report.stt_errors += 1;
@@ -228,6 +375,7 @@ pub async fn run_voice_session_with_playback(
                     }
                     Some(CallEvent::Text(text)) => {
                         if let Some(task) = active_response.take() { task.abort(); let _ = task.await; }
+                        if let Some(report) = report_interruption(&providers, &context, &playback, &last_prompt) { pending_report = Some(report); }
                         playback.invalidate();
                         audio_playing.store(false, std::sync::atomic::Ordering::SeqCst);
                         output.send(CallCommand::Clear).await.map_err(|_| VoiceError::Protocol("output closed".into()))?;
@@ -269,12 +417,34 @@ pub async fn run_voice_session_with_playback(
                         let assistant_active = audio_playing.load(std::sync::atomic::Ordering::SeqCst)
                             || active_response.is_some();
                         if assistant_active {
-                            let is_ack = is_backchannel(&text);
-
-                            if is_ack {
-                                report.backchannels += 1;
-                            tracing::info!(transcript_bytes = text.len(), "VOICE_BACKCHANNEL_IGNORED");
-                            } else {
+                            let echo = is_echo(&text, &playback.recent_speech());
+                            if echo || is_backchannel(&text) {
+                                if echo {
+                                    report.echoes += 1;
+                                    if playback.is_held() && vad_barge_in {
+                                        vad_barge_in = false;
+                                        tracing::info!(reason = "echo", "VOICE_VAD_BARGE_IN_DISABLED");
+                                    }
+                                } else {
+                                    report.backchannels += 1;
+                                }
+                                if playback.resume() {
+                                    hold_until = None;
+                                    tracing::info!(reason = if echo { "echo" } else { "backchannel" }, "VOICE_PLAYBACK_RESUMED");
+                                }
+                                tracing::info!(transcript_bytes = text.len(), echo, "VOICE_BACKCHANNEL_IGNORED");
+                                continue;
+                            }
+                            if word_count(&text) < 2 && !is_stop_request(&text) {
+                                hold_until = hold_until.map(|at| at.max(tokio::time::Instant::now() + HOLD_EXTENSION));
+                                tracing::info!(transcript_bytes = text.len(), held = playback.is_held(), "VOICE_BARGE_IN_PENDING");
+                                continue;
+                            }
+                            hold_until = None;
+                            {
+                                if let Some(report) = report_interruption(&providers, &context, &playback, &last_prompt) {
+                                    pending_report = Some(report);
+                                }
                                 let is_playing = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
                                 playback.invalidate();
                                 if let Some(task) = active_response.take() {
@@ -312,14 +482,31 @@ pub async fn run_voice_session_with_playback(
 
                         let assistant_active = audio_playing.load(std::sync::atomic::Ordering::SeqCst)
                             || active_response.is_some();
-                        if assistant_active && is_backchannel(&text) {
-                            report.backchannels += 1;
-                            tracing::info!(transcript_bytes = text.len(), "VOICE_BACKCHANNEL_IGNORED");
+                        let echo = assistant_active && is_echo(&text, &playback.recent_speech());
+                        if assistant_active && (echo || is_backchannel(&text)) {
+                            if echo {
+                                report.echoes += 1;
+                                if playback.is_held() && vad_barge_in {
+                                    vad_barge_in = false;
+                                    tracing::info!(reason = "echo", "VOICE_VAD_BARGE_IN_DISABLED");
+                                }
+                            } else {
+                                report.backchannels += 1;
+                            }
+                            if playback.resume() {
+                                hold_until = None;
+                                tracing::info!(reason = if echo { "echo" } else { "backchannel" }, "VOICE_PLAYBACK_RESUMED");
+                            }
+                            tracing::info!(transcript_bytes = text.len(), echo, "VOICE_BACKCHANNEL_IGNORED");
                             speech_started_at = None;
                             continue;
                         }
 
                         if assistant_active {
+                            hold_until = None;
+                            if let Some(report) = report_interruption(&providers, &context, &playback, &last_prompt) {
+                                pending_report = Some(report);
+                            }
                             let is_playing = audio_playing.swap(false, std::sync::atomic::Ordering::SeqCst);
                             playback.invalidate();
                             if let Some(task) = active_response.take() {
@@ -430,12 +617,20 @@ pub async fn run_voice_session_with_playback(
                     transcript_received_at: std::time::Instant::now(),
             last_transcript_received_at: std::time::Instant::now(),
                 });
+                if let Some(report) = report_interruption(&providers, &context, &playback, &last_prompt) {
+                    pending_report = Some(report);
+                }
+                if let Some(report) = pending_report.take() {
+                    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), report).await;
+                }
                 context.turn_id = Some(turn.id.clone());
                 context.revision = Some(turn.revision);
                 if let Some(task) = active_response.take() {
                     task.abort();
                     let _ = task.await;
                 }
+                last_prompt = turn.text.clone();
+                hold_until = None;
 
                 response_number += 1;
                 playback.begin();
@@ -456,6 +651,17 @@ pub async fn run_voice_session_with_playback(
                     answer_started.clone(),
                     playback.clone(),
                 )));
+            }
+            _ = async {
+                match hold_until {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                hold_until = None;
+                if playback.resume() {
+                    tracing::info!(reason = "unconfirmed", "VOICE_PLAYBACK_RESUMED");
+                }
             }
             signal = signal_rx.recv() => {
                 match signal {
@@ -502,6 +708,8 @@ struct SessionReport {
     partials: u64,
     finals: u64,
     backchannels: u64,
+    echoes: u64,
+    holds: u64,
     interruptions: u64,
     stt_errors: u64,
     stt_reconnects: u64,
@@ -516,6 +724,8 @@ impl SessionReport {
             partials: 0,
             finals: 0,
             backchannels: 0,
+            echoes: 0,
+            holds: 0,
             interruptions: 0,
             stt_errors: 0,
             stt_reconnects: 0,
@@ -532,6 +742,8 @@ impl Drop for SessionReport {
             partials = self.partials,
             finals = self.finals,
             backchannels = self.backchannels,
+            echoes = self.echoes,
+            holds = self.holds,
             interruptions = self.interruptions,
             stt_errors = self.stt_errors,
             stt_reconnects = self.stt_reconnects,

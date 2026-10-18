@@ -8,8 +8,9 @@ use uuid::Uuid;
 use crate::channels::context::CallContext;
 use crate::core::protocol::{
     ApproveRequestBody, CompleteRequest, ContextRequest, CreateProposalRequest, DurableTask,
-    HostContextRequest, IdentityPayload, Proposal, ProposeRequestBody, RespondRequest,
-    RespondResponse, StartTaskRequest, StartTaskRequestBody, WaitRequest, WaitRequestBody,
+    HostContextRequest, IdentityPayload, InterruptedRequest, Proposal, ProposeRequestBody,
+    RespondRequest, RespondResponse, StartTaskRequest, StartTaskRequestBody, WaitRequest,
+    WaitRequestBody,
 };
 use crate::core::sse::parse_sse_stream;
 use crate::core::{ConversationClient, ConversationEventStream, TextStream};
@@ -766,6 +767,51 @@ impl ConversationClient for CoreClient {
             return Err(VoiceError::Provider {
                 provider: "core",
                 message: "Core returned an error on complete".into(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn interrupted(
+        &self,
+        context: &CallContext,
+        prompt: &str,
+        reply: &str,
+        heard: &str,
+    ) -> Result<(), VoiceError> {
+        let endpoint = format!("{}/v1/conversations/interrupted", self.base_url);
+        let payload = InterruptedRequest {
+            host_context: HostContextRequest {
+                host_user_id: context.external_identity.clone(),
+                organization_external_key: None,
+            },
+            agent_external_key: &self.agent_external_key,
+            identity: IdentityPayload {
+                channel: &context.channel,
+                external_id: &context.external_identity,
+            },
+            external_conversation_id: &context.external_conversation_id,
+            text: prompt,
+            reply,
+            heard,
+        };
+        let response = self
+            .prepare_request(
+                self.client.post(&endpoint),
+                &context.external_identity,
+                None,
+            )?
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|_| VoiceError::Provider {
+                provider: "core",
+                message: "Core interruption request failed".into(),
+            })?;
+        if !response.status().is_success() {
+            return Err(VoiceError::Provider {
+                provider: "core",
+                message: "Core returned an error on interruption".into(),
             });
         }
         Ok(())
