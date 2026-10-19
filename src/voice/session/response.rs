@@ -290,12 +290,18 @@ async fn stream_response(
     let router_jev = jev.clone();
     let mut connect_future = Box::pin(tokio::time::timeout(Duration::from_secs(30), async {
         if context.external_conversation_id.starts_with("desktop:")
-            && let Some(spoken) =
-                fast_navigate(router_jev.as_deref(), agent.as_ref(), transcript, &fast_routed).await
+            && let Some(spoken) = fast_navigate(
+                router_jev.as_deref(),
+                agent.as_ref(),
+                transcript,
+                &fast_routed,
+            )
+            .await
         {
-            let events: ConversationEventStream = Box::pin(futures_util::stream::once(async move {
-                Ok(ConversationEvent::Text(spoken))
-            }));
+            let events: ConversationEventStream =
+                Box::pin(futures_util::stream::once(async move {
+                    Ok(ConversationEvent::Text(spoken))
+                }));
             return Ok(events);
         }
         agent.respond_events(&mut_context, transcript).await
@@ -465,7 +471,14 @@ async fn stream_response(
 }
 
 const NAVIGATION_WORDS: [&str; 8] = [
-    "open", "show", "go to", "take me", "switch to", "navigate", "bring up", "pull up",
+    "open",
+    "show",
+    "go to",
+    "take me",
+    "switch to",
+    "navigate",
+    "bring up",
+    "pull up",
 ];
 
 async fn fast_navigate(
