@@ -68,6 +68,7 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
         revision: None,
         tts_provider: Some(profile.tts.provider),
         outbound: false,
+        usage: Default::default(),
     };
     let mut handle = spawn_playback_session(providers.clone(), context.clone());
     let (audio_format, sample_rate) = match format {

@@ -46,6 +46,7 @@ pub struct PlaybackState {
     answer_started: AtomicBool,
     held: AtomicBool,
     spoken: Mutex<Spoken>,
+    played_before: AtomicU64,
     format: AudioFormat,
 }
 
@@ -73,11 +74,19 @@ impl PlaybackState {
         self.audio_playing.store(true, Ordering::SeqCst);
         self.held.store(false, Ordering::SeqCst);
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        *self.spoken.lock().unwrap() = Spoken {
+        let mut spoken = self.spoken.lock().unwrap();
+        self.played_before
+            .fetch_add(spoken.played(self.format), Ordering::SeqCst);
+        *spoken = Spoken {
             generation,
             ..Spoken::default()
         };
         generation
+    }
+
+    pub fn total_played_bytes(&self) -> u64 {
+        let spoken = self.spoken.lock().unwrap();
+        self.played_before.load(Ordering::SeqCst) + spoken.played(self.format)
     }
 
     pub fn invalidate(&self) -> u64 {

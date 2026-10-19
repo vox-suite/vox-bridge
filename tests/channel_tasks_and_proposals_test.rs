@@ -198,6 +198,7 @@ async fn test_sender_verification_blocks_unauthorized_parties() {
         revision: None,
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
 
     assert!(ChannelInteractionHandler::verify_sender(&context, "+15551234567").is_ok());
@@ -250,6 +251,7 @@ async fn test_cannot_forge_approval_when_core_rejects_expired_or_changed_proposa
         revision: None,
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
 
     let result = ChannelInteractionHandler::handle_approve(
@@ -291,6 +293,7 @@ async fn test_cannot_report_success_independently_when_core_is_unreachable() {
         revision: None,
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
 
     let result = ChannelInteractionHandler::handle_approve(
@@ -363,6 +366,7 @@ async fn test_reconnect_and_status_command_fetches_authoritative_run_state() {
         revision: None,
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
 
     let status1 =
@@ -420,6 +424,7 @@ async fn test_duplicate_decision_reports_duplicate_safely() {
         revision: None,
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
 
     let result = ChannelInteractionHandler::handle_approve(

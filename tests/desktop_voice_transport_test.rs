@@ -82,6 +82,7 @@ async fn redeemed_session_scopes_stream_and_completion_without_forwarding_identi
         revision: Some(1),
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
     assert_eq!(
         client.respond(&context, "Open timeline").await.unwrap(),

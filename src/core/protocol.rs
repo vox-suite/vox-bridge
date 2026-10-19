@@ -37,6 +37,7 @@ pub struct CompleteRequest<'a> {
     pub agent_external_key: &'a str,
     pub identity: IdentityPayload<'a>,
     pub external_conversation_id: &'a str,
+    pub usage: Option<crate::channels::context::VoiceUsageReport>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

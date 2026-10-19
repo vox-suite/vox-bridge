@@ -98,6 +98,7 @@ async fn run_scenario(
             revision: Some(0),
             tts_provider: None,
             outbound: false,
+            usage: Default::default(),
         },
         "Weather in Chennai?".into(),
         Some(TurnTiming {

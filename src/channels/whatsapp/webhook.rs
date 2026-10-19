@@ -148,6 +148,7 @@ pub async fn wa_receive(
                                 revision: None,
                                 tts_provider: None,
                                 outbound: false,
+                                usage: Default::default(),
                             };
                             if crate::channels::notifications::is_opt_out_keyword(&body) {
                                 let now = crate::channels::notifications::now_epoch_secs();

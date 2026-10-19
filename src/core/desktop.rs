@@ -124,13 +124,19 @@ impl ConversationClient for DesktopConversationClient {
         }
         body["spoken"].as_str().map(str::to_owned)
     }
-    async fn complete(&self, _: &CallContext) -> Result<(), VoiceError> {
-        self.client
+    async fn complete(&self, context: &CallContext) -> Result<(), VoiceError> {
+        let request = self
+            .client
             .post(format!(
                 "{}/internal/v1/desktop-voice/{}/complete",
                 self.base, self.session
             ))
-            .bearer_auth(&self.token)
+            .bearer_auth(&self.token);
+        let request = match context.usage.get() {
+            Some(usage) => request.json(&usage),
+            None => request,
+        };
+        request
             .send()
             .await
             .map_err(|_| error("completion_unavailable"))?

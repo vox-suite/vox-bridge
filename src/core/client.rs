@@ -749,6 +749,7 @@ impl ConversationClient for CoreClient {
                 external_id: &context.external_identity,
             },
             external_conversation_id: &context.external_conversation_id,
+            usage: context.usage.get(),
         };
         let response = self
             .prepare_request(

@@ -11,6 +11,7 @@ fn builds_call_context_identity() {
         revision: None,
         tts_provider: Some("elevenlabs".into()),
         outbound: false,
+        usage: Default::default(),
     };
     assert_eq!(ctx.channel, "voice");
     assert_eq!(ctx.external_identity, "+15551234567");

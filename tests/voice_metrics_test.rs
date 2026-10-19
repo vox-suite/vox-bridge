@@ -39,6 +39,7 @@ fn core_wait_is_not_reported_as_provider_llm_ttft() {
         revision: Some(2),
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
     tracing::subscriber::with_default(subscriber, || {
         let mut metrics = ResponseMetrics::new(base, None);
@@ -103,6 +104,7 @@ async fn aborted_response_reports_cancellation_with_turn_correlation() {
         revision: Some(0),
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
     let playback = Arc::new(PlaybackState::new());
     playback.begin();

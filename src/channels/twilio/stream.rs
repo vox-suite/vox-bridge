@@ -133,6 +133,7 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         revision: None,
         tts_provider: Some(profile.tts.provider.clone()),
         outbound: accepted_call.action_id.is_some(),
+        usage: Default::default(),
     };
     let providers = state
         .voice

@@ -71,6 +71,7 @@ async fn closed_stt_stream_reconnects_then_ends_instead_of_spinning() {
         revision: None,
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     };
     let (_input_tx, input_rx) = mpsc::channel(8);
     let (output_tx, _output_rx) = mpsc::channel(8);
@@ -121,6 +122,7 @@ fn context() -> CallContext {
         revision: None,
         tts_provider: None,
         outbound: false,
+        usage: Default::default(),
     }
 }
 #[tokio::test]

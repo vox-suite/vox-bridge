@@ -260,7 +260,7 @@ pub async fn run_voice_session_with_playback(
     playback: Arc<PlaybackState>,
 ) -> Result<(), VoiceError> {
     let session_started = std::time::Instant::now();
-    let mut report = SessionReport::new(session_started);
+    let mut report = SessionReport::new(session_started, context.usage.clone(), playback.clone());
     tracing::info!("VOICE_SESSION_STARTED");
     let stt_connect = providers.stt.connect();
 
@@ -703,6 +703,8 @@ pub async fn run_voice_session_with_playback(
 
 struct SessionReport {
     started: std::time::Instant,
+    usage: crate::channels::context::VoiceUsage,
+    playback: Arc<PlaybackState>,
     outcome: &'static str,
     input_frames: u64,
     input_bytes: u64,
@@ -716,9 +718,15 @@ struct SessionReport {
     stt_reconnects: u64,
 }
 impl SessionReport {
-    fn new(started: std::time::Instant) -> Self {
+    fn new(
+        started: std::time::Instant,
+        usage: crate::channels::context::VoiceUsage,
+        playback: Arc<PlaybackState>,
+    ) -> Self {
         Self {
             started,
+            usage,
+            playback,
             outcome: "unexpected_exit",
             input_frames: 0,
             input_bytes: 0,
@@ -735,6 +743,12 @@ impl SessionReport {
 }
 impl Drop for SessionReport {
     fn drop(&mut self) {
+        let bytes_per_second = (self.playback.format().bytes_per_ms() * 1000) as f64;
+        self.usage.set(crate::channels::context::VoiceUsageReport {
+            session_seconds: self.started.elapsed().as_secs_f64(),
+            input_audio_seconds: self.input_bytes as f64 / bytes_per_second,
+            output_audio_seconds: self.playback.total_played_bytes() as f64 / bytes_per_second,
+        });
         tracing::info!(
             outcome = self.outcome,
             session_ms = self.started.elapsed().as_millis() as u64,
