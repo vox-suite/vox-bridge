@@ -1,3 +1,5 @@
+use crate::voice::audio::AudioFormat;
+
 pub struct VoiceActivity {
     detector: earshot::Detector,
     frame: Vec<i16>,
@@ -34,6 +36,19 @@ impl VoiceActivity {
         self.active
     }
 
+    pub fn push(&mut self, bytes: &[u8], format: AudioFormat) -> Activity {
+        match format {
+            AudioFormat::Mulaw8k => self.push_mulaw(bytes),
+            AudioFormat::Pcm16k => {
+                let mut event = Activity::default();
+                for pair in bytes.as_chunks::<2>().0 {
+                    self.push_sample(i16::from_le_bytes(*pair), &mut event);
+                }
+                event
+            }
+        }
+    }
+
     pub fn push_mulaw(&mut self, bytes: &[u8]) -> Activity {
         let mut event = Activity::default();
         for &byte in bytes {
@@ -44,36 +59,42 @@ impl VoiceActivity {
             } else {
                 magnitude
             } as i16;
-            for sample in [((self.previous as i32 + sample as i32) / 2) as i16, sample] {
-                self.frame.push(sample);
-                if self.frame.len() != 256 {
-                    continue;
-                }
-                let speech = self.detector.predict_i16(&self.frame) >= 0.5;
-                event.voiced |= speech;
-                if !self.active {
-                    self.onset = if speech { self.onset + 1 } else { 0 };
-                    if self.onset >= 3 {
-                        self.active = true;
-                        self.voiced = self.onset;
-                        self.silence = 0;
-                        event.started = true;
-                    }
-                } else if speech {
-                    self.voiced += 1;
-                    self.silence = 0;
-                } else {
-                    self.silence += 1;
-                    if self.silence >= 40 {
-                        event.ended |= self.voiced >= 10;
-                        self.active = false;
-                        self.onset = 0;
-                    }
-                }
-                self.frame.clear();
-            }
+            self.push_sample(
+                ((self.previous as i32 + sample as i32) / 2) as i16,
+                &mut event,
+            );
+            self.push_sample(sample, &mut event);
             self.previous = sample;
         }
         event
+    }
+
+    fn push_sample(&mut self, sample: i16, event: &mut Activity) {
+        self.frame.push(sample);
+        if self.frame.len() != 256 {
+            return;
+        }
+        let speech = self.detector.predict_i16(&self.frame) >= 0.5;
+        event.voiced |= speech;
+        if !self.active {
+            self.onset = if speech { self.onset + 1 } else { 0 };
+            if self.onset >= 3 {
+                self.active = true;
+                self.voiced = self.onset;
+                self.silence = 0;
+                event.started = true;
+            }
+        } else if speech {
+            self.voiced += 1;
+            self.silence = 0;
+        } else {
+            self.silence += 1;
+            if self.silence >= 40 {
+                event.ended |= self.voiced >= 10;
+                self.active = false;
+                self.onset = 0;
+            }
+        }
+        self.frame.clear();
     }
 }

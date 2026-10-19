@@ -65,7 +65,7 @@ pub fn spawn_playback_session(
     providers: VoiceProviders,
     context: CallContext,
 ) -> VoiceSessionHandle {
-    let playback = Arc::new(PlaybackState::new());
+    let playback = Arc::new(PlaybackState::with_format(providers.format));
     let (input_tx, input_rx) = mpsc::channel(64);
     let (session_tx, session_rx) = mpsc::channel(64);
     let (output_tx, output_rx) = mpsc::channel(64);
@@ -84,7 +84,7 @@ pub fn spawn_playback_session(
     }
 }
 
-const PACING_SLICE: usize = 800;
+const PACING_SLICE_MS: u64 = 100;
 
 async fn pace_output(
     mut input: mpsc::Receiver<CallCommand>,
@@ -165,9 +165,10 @@ async fn pace_output(
                     }
                 }
                 Some(CallCommand::Media { bytes, generation, kind, queued_at, latency_origin_at }) => {
-                    for offset in (0..bytes.len()).step_by(PACING_SLICE) {
+                    let slice = (PACING_SLICE_MS * playback.format().bytes_per_ms()) as usize;
+                    for offset in (0..bytes.len()).step_by(slice) {
                         pending.push_back(CallCommand::Media {
-                            bytes: bytes.slice(offset..(offset + PACING_SLICE).min(bytes.len())),
+                            bytes: bytes.slice(offset..(offset + slice).min(bytes.len())),
                             generation,
                             kind,
                             queued_at,
@@ -344,7 +345,7 @@ pub async fn run_voice_session_with_playback(
                 match event {
                     Some(CallEvent::Audio(bytes)) => {
                         report.input_frames += 1; report.input_bytes += bytes.len() as u64;
-                        let detected = activity.push_mulaw(&bytes);
+                        let detected = activity.push(&bytes, playback.format());
                         if detected.voiced { last_voiced_audio_at = Some(std::time::Instant::now()); }
                         if detected.started {
                             stt_pending = true;

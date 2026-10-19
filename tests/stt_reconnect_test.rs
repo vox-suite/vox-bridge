@@ -60,6 +60,7 @@ async fn closed_stt_stream_reconnects_then_ends_instead_of_spinning() {
         tts: Arc::new(NoTts),
         filler_tts: Arc::new(NoTts),
         jev: None,
+        format: Default::default(),
     };
     let context = CallContext {
         channel: "desktop".into(),
@@ -131,6 +132,7 @@ async fn failed_reconnect_is_retried_before_ending_call() {
         tts: Arc::new(NoTts),
         filler_tts: Arc::new(NoTts),
         jev: None,
+        format: Default::default(),
     };
     let (tx, rx) = mpsc::channel(8);
     let (out, _receiver) = mpsc::channel(8);
@@ -190,6 +192,7 @@ async fn failing_session_cancels_its_pending_greeting() {
         tts: Arc::new(NoTts),
         filler_tts: Arc::new(NoTts),
         jev: None,
+        format: Default::default(),
     };
     let mut ctx = context();
     ctx.initiation_context = Some("greet".into());
@@ -221,6 +224,7 @@ async fn aborting_session_cancels_its_pending_response() {
         tts: Arc::new(NoTts),
         filler_tts: Arc::new(NoTts),
         jev: None,
+        format: Default::default(),
     };
     let mut ctx = context();
     ctx.initiation_context = Some("greet".into());

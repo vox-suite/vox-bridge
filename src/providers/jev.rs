@@ -65,7 +65,7 @@ impl JevClient {
         transcript: &str,
     ) -> Result<Option<&'static str>, VoiceError> {
         let mut criteria = serde_json::Map::new();
-        criteria.insert("none".into(), json!("No acknowledgment for greetings, gratitude, closures, or questions that need no lookup or work."));
+        criteria.insert("none".into(), json!("No acknowledgment for greetings, gratitude, closures, or questions that need no lookup or work. Requests to open, show or change something in the app are work."));
         for (index, phrase) in crate::voice::filler::ACKNOWLEDGEMENTS.iter().enumerate() {
             criteria.insert(index.to_string(), json!(phrase));
         }
@@ -75,7 +75,7 @@ impl JevClient {
             "questions": {
                 "acknowledgement": {
                     "type": "choice",
-                    "instructions": "Choose one brief, natural acknowledgment to speak while the main assistant works in parallel. Match the request and its tone. Weather phrases only for weather requests; order and account phrases only for those requests. Never claim a result, success, or completed action. Choose none if no lookup or work is needed.",
+                    "instructions": "Choose one brief, natural acknowledgment to speak while the main assistant works in parallel. Match the request and its tone. Weather phrases only for weather requests; order and account phrases only for those requests; \"Opening that now.\" only for requests to open a page, project or item. Prefer the most specific phrase that names what is being checked (calendar, inbox, spending, transactions, web, route, place, song, projects, spaces, reminder, message) and use a general phrase only when none fits. Never claim a result, success, or completed action. Choose none if no lookup or work is needed.",
                     "criteria": criteria
                 }
             }
@@ -102,6 +102,60 @@ impl JevClient {
                 message: "unknown acknowledgement choice".into(),
             })?;
         Ok(Some(phrase))
+    }
+
+    pub async fn route_desktop(
+        &self,
+        transcript: &str,
+    ) -> Result<Option<&'static str>, VoiceError> {
+        const ROUTES: [(&str, &str); 9] = [
+            (
+                "none",
+                "Anything else: questions, searches, date ranges or filters, edits, creating things, a specific space or chart, or several requests at once.",
+            ),
+            ("agent", "Open the agent, home or chat page."),
+            (
+                "timeline",
+                "Open the timeline page with no date range, filter or question.",
+            ),
+            ("spaces", "Open the list of spaces, not one specific space."),
+            (
+                "projects",
+                "Open the list of projects, not one specific project.",
+            ),
+            (
+                "pulse",
+                "Open the pulse charts page, not one specific chart.",
+            ),
+            ("connections", "Open the connections or integrations page."),
+            ("updates", "Open the updates or notifications page."),
+            ("project", "Open one specific project the user names."),
+        ];
+        let criteria: serde_json::Map<String, serde_json::Value> = ROUTES
+            .iter()
+            .map(|(key, meaning)| ((*key).to_owned(), json!(meaning)))
+            .collect();
+        let body = json!({
+            "state": transcript,
+            "model": "jev-latest",
+            "questions": {
+                "route": {
+                    "type": "choice",
+                    "instructions": "Is the user only asking to open a page or a named project in the Vox desktop app? Choose the destination, or none if they want anything more than opening it.",
+                    "criteria": criteria
+                }
+            }
+        });
+        let parsed = self
+            .post_system_one(&body, Duration::from_millis(400))
+            .await?;
+        let choice = parsed["answers"]["route"]["choice"]
+            .as_str()
+            .unwrap_or("none");
+        Ok(ROUTES
+            .iter()
+            .map(|(key, _)| *key)
+            .find(|key| *key == choice && *key != "none"))
     }
 
     pub async fn is_complete_thought(&self, transcript: &str) -> Result<f64, VoiceError> {

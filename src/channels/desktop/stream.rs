@@ -5,6 +5,7 @@ use crate::{
     core::desktop::DesktopConversationClient,
     state::AppState,
     voice::{
+        audio::AudioFormat,
         provider::VoiceError,
         session::{CallCommand, CallEvent, shutdown_playback_session, spawn_playback_session},
     },
@@ -35,12 +36,20 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
     let first = tokio::time::timeout(Duration::from_secs(5), receiver.next())
         .await
         .map_err(|_| VoiceError::Timeout("desktop_start"))?;
-    let (ticket, client_metrics) = match first {
+    let (ticket, client_metrics, format) = match first {
         Some(Ok(Message::Text(raw))) => match parse_control(&raw)? {
             Control::Start {
                 ticket,
                 client_metrics,
-            } => (ticket, client_metrics),
+                audio_formats,
+            } => {
+                let format = if audio_formats.iter().any(|f| f == "pcm_s16le_16000") {
+                    AudioFormat::Pcm16k
+                } else {
+                    AudioFormat::Mulaw8k
+                };
+                (ticket, client_metrics, format)
+            }
             _ => return Err(VoiceError::Protocol("start_required".into())),
         },
         _ => return Err(VoiceError::Protocol("start_required".into())),
@@ -48,7 +57,7 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
     let (client, binding) =
         DesktopConversationClient::redeem(&state.core_url, &state.service_token, &ticket).await?;
     let profile = state.voice.resolver.resolve();
-    let mut providers = state.voice.providers.providers_for(&profile)?;
+    let mut providers = state.voice.providers.providers_for(&profile, format)?;
     providers.agent = Arc::new(client);
     let context = CallContext {
         channel: "voice".into(),
@@ -61,7 +70,11 @@ async fn run(socket: WebSocket, state: Arc<AppState>) -> Result<(), VoiceError> 
         outbound: false,
     };
     let mut handle = spawn_playback_session(providers.clone(), context.clone());
-    let connected = json!({"type":"connected","session_id":binding.session_id,"device_id":binding.device_id,"audio_format":"mulaw","sample_rate":8000,"input_mode":"stream","speech_detector":"earshot"});
+    let (audio_format, sample_rate) = match format {
+        AudioFormat::Mulaw8k => ("mulaw", 8000),
+        AudioFormat::Pcm16k => ("pcm_s16le", 16000),
+    };
+    let connected = json!({"type":"connected","session_id":binding.session_id,"device_id":binding.device_id,"audio_format":audio_format,"sample_rate":sample_rate,"input_mode":"stream","speech_detector":"earshot"});
     let result=async {
         send_frame(&mut sender,Message::Text(connected.to_string().into())).await.map_err(|_|VoiceError::Protocol("connection_closed".into()))?;
         let mut heartbeat=tokio::time::interval(Duration::from_secs(20));

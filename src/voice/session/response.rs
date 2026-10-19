@@ -214,8 +214,9 @@ async fn stream_response(
                             sentence_bytes = sentence.len(),
                             "VOICE_TTS_SENTENCE_STARTED"
                         );
-                        let sentence_tts = if kind == AudioKind::Filler {
-                            filler_tts.as_ref()
+                        let cached_filler = crate::voice::filler::CachedFiller(&filler_tts);
+                        let sentence_tts: &dyn TtsProvider = if kind == AudioKind::Filler {
+                            &cached_filler
                         } else {
                             player_tts.as_ref()
                         };
@@ -283,11 +284,22 @@ async fn stream_response(
         m.last_stage = "core_headers";
     }
     let core_request_start = std::time::Instant::now();
-    let mut connect_future = Box::pin(tokio::time::timeout(
-        Duration::from_secs(30),
-        agent.respond_events(&mut_context, transcript),
-    ));
     let mut text_stream: Option<ConversationEventStream> = None;
+
+    let fast_routed = std::sync::atomic::AtomicBool::new(false);
+    let router_jev = jev.clone();
+    let mut connect_future = Box::pin(tokio::time::timeout(Duration::from_secs(30), async {
+        if context.external_conversation_id.starts_with("desktop:")
+            && let Some(spoken) =
+                fast_navigate(router_jev.as_deref(), agent.as_ref(), transcript, &fast_routed).await
+        {
+            let events: ConversationEventStream = Box::pin(futures_util::stream::once(async move {
+                Ok(ConversationEvent::Text(spoken))
+            }));
+            return Ok(events);
+        }
+        agent.respond_events(&mut_context, transcript).await
+    }));
 
     let is_greeting = number == 1 && context.initiation_context.is_some();
     let mut acknowledgement_done =
@@ -338,7 +350,10 @@ async fn stream_response(
                 acknowledgement_done = true;
                 let (phrase, decision_ms) = selected;
                 metrics.lock().unwrap().filler_decision_ms = Some(decision_ms);
-                if metrics.lock().unwrap().first_text.is_none() && let Some(phrase) = phrase {
+                if metrics.lock().unwrap().first_text.is_none()
+                    && !fast_routed.load(std::sync::atomic::Ordering::SeqCst)
+                    && let Some(phrase) = phrase
+                {
                     tracing::info!(phrase, decision_ms, "VOICE_ACKNOWLEDGEMENT_SELECTED");
                     spoken_tx.send(Spoken::Sentence { text: phrase.into(), queued_at: std::time::Instant::now(), kind: AudioKind::Filler }).await.map_err(|_| VoiceError::Protocol("speech output closed".into()))?;
                     filler_played = true;
@@ -447,6 +462,38 @@ async fn stream_response(
     metrics.lock().unwrap().last_stage = "generation_finished";
 
     Ok(full_response)
+}
+
+const NAVIGATION_WORDS: [&str; 8] = [
+    "open", "show", "go to", "take me", "switch to", "navigate", "bring up", "pull up",
+];
+
+async fn fast_navigate(
+    jev: Option<&JevClient>,
+    agent: &dyn ConversationClient,
+    transcript: &str,
+    routed: &std::sync::atomic::AtomicBool,
+) -> Option<String> {
+    let lower = transcript.to_lowercase();
+    if !NAVIGATION_WORDS.iter().any(|word| lower.contains(word)) {
+        return None;
+    }
+    let started = std::time::Instant::now();
+    let page = jev?.route_desktop(transcript).await.ok().flatten()?;
+    routed.store(true, std::sync::atomic::Ordering::SeqCst);
+    let route_ms = started.elapsed().as_millis() as u64;
+    let spoken = agent.fast_navigate(transcript, page).await;
+    tracing::info!(
+        page,
+        handled = spoken.is_some(),
+        route_ms,
+        total_ms = started.elapsed().as_millis() as u64,
+        "VOICE_FAST_NAVIGATE"
+    );
+    if spoken.is_none() {
+        routed.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+    spoken
 }
 
 /// Speaks a short apology when a turn fails outright, so the caller never gets dead air.

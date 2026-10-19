@@ -101,6 +101,29 @@ impl ConversationClient for DesktopConversationClient {
         }
         Ok(Box::pin(parse_sse_stream(response.bytes_stream())))
     }
+    async fn fast_navigate(&self, transcript: &str, page: &str) -> Option<String> {
+        let body: serde_json::Value = self
+            .client
+            .post(format!(
+                "{}/internal/v1/desktop-voice/{}/navigate",
+                self.base, self.session
+            ))
+            .bearer_auth(&self.token)
+            .timeout(Duration::from_secs(3))
+            .json(&json!({"text":transcript,"page":page}))
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        if body["handled"] != true {
+            return None;
+        }
+        body["spoken"].as_str().map(str::to_owned)
+    }
     async fn complete(&self, _: &CallContext) -> Result<(), VoiceError> {
         self.client
             .post(format!(

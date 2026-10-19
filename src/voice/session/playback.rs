@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-const MULAW_BYTES_PER_MS: u64 = 8;
+use crate::voice::audio::AudioFormat;
 pub const PACING_LOOKAHEAD: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Default)]
@@ -27,13 +27,15 @@ struct Spoken {
 }
 
 impl Spoken {
-    fn played(&self) -> u64 {
+    fn played(&self, format: AudioFormat) -> u64 {
         let unplayed = self
             .drains_at
             .map(|at| at.saturating_duration_since(Instant::now()))
             .unwrap_or_default();
-        self.forwarded
-            .saturating_sub(unplayed.as_millis() as u64 * MULAW_BYTES_PER_MS)
+        let played = self
+            .forwarded
+            .saturating_sub(unplayed.as_millis() as u64 * format.bytes_per_ms());
+        played - played % format.sample_bytes()
     }
 }
 
@@ -44,11 +46,23 @@ pub struct PlaybackState {
     answer_started: AtomicBool,
     held: AtomicBool,
     spoken: Mutex<Spoken>,
+    format: AudioFormat,
 }
 
 impl PlaybackState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_format(format: AudioFormat) -> Self {
+        Self {
+            format,
+            ..Self::default()
+        }
+    }
+
+    pub fn format(&self) -> AudioFormat {
+        self.format
     }
 
     pub fn current_generation(&self) -> u64 {
@@ -154,8 +168,9 @@ impl PlaybackState {
         self.with_spoken(generation, |spoken| {
             let now = Instant::now();
             let start = spoken.drains_at.filter(|at| *at > now).unwrap_or(now);
-            spoken.drains_at =
-                Some(start + Duration::from_micros(bytes as u64 * 1000 / MULAW_BYTES_PER_MS));
+            spoken.drains_at = Some(
+                start + Duration::from_micros(bytes as u64 * 1000 / self.format.bytes_per_ms()),
+            );
             offset = spoken.forwarded;
             spoken.forwarded += bytes as u64;
         });
@@ -164,13 +179,13 @@ impl PlaybackState {
 
     pub fn played(&self, generation: u64) -> Option<u64> {
         let spoken = self.spoken.lock().unwrap();
-        (spoken.generation == generation).then(|| spoken.played())
+        (spoken.generation == generation).then(|| spoken.played(self.format))
     }
 
     pub fn rewind(&self, generation: u64) -> Option<u64> {
         let mut played = None;
         self.with_spoken(generation, |spoken| {
-            spoken.forwarded = spoken.played();
+            spoken.forwarded = spoken.played(self.format);
             spoken.drains_at = None;
             played = Some(spoken.forwarded);
         });
@@ -182,7 +197,9 @@ impl PlaybackState {
         if spoken.generation != self.current_generation() {
             return String::new();
         }
-        let from = spoken.played().saturating_sub(4000 * MULAW_BYTES_PER_MS);
+        let from = spoken
+            .played(self.format)
+            .saturating_sub(4000 * self.format.bytes_per_ms());
         spoken
             .segments
             .iter()
@@ -204,7 +221,7 @@ impl PlaybackState {
         {
             return None;
         }
-        let played = spoken.played();
+        let played = spoken.played(self.format);
         if spoken.complete && played >= spoken.queued {
             return None;
         }

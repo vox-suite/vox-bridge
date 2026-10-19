@@ -23,7 +23,75 @@ pub const ACKNOWLEDGEMENTS: &[&str] = &[
     "I'll look through your recent history.",
     "Let me work through that.",
     "Give me a moment to put that together.",
+    "On it.",
+    "Opening that now.",
+    "Let me check your calendar.",
+    "I'll look through your inbox.",
+    "Let me pull up your spending.",
+    "Let me look at your transactions.",
+    "Searching the web for that.",
+    "Let me find the latest on that.",
+    "Let me check the route.",
+    "Let me find that place.",
+    "Let me find that song.",
+    "Let me look at your projects.",
+    "Let me look through your spaces.",
+    "I'll set up that reminder.",
+    "I'll draft that message.",
+    "Setting that up now.",
 ];
+
+type FillerCache = std::sync::Mutex<
+    std::collections::HashMap<(usize, &'static str), std::sync::Arc<Vec<bytes::Bytes>>>,
+>;
+
+fn filler_cache() -> &'static FillerCache {
+    static CACHE: std::sync::OnceLock<FillerCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+pub struct CachedFiller<'a>(pub &'a std::sync::Arc<dyn crate::providers::tts::TtsProvider>);
+
+#[async_trait::async_trait]
+impl crate::providers::tts::TtsProvider for CachedFiller<'_> {
+    async fn synthesize(
+        &self,
+        text: &str,
+    ) -> Result<crate::providers::tts::AudioStream, crate::voice::provider::VoiceError> {
+        use futures_util::StreamExt;
+        let Some(phrase) = ACKNOWLEDGEMENTS.iter().copied().find(|p| *p == text) else {
+            return self.0.synthesize(text).await;
+        };
+        let key = (std::sync::Arc::as_ptr(self.0) as *const () as usize, phrase);
+        if let Some(chunks) = filler_cache().lock().unwrap().get(&key).cloned() {
+            let chunks: Vec<_> = chunks.iter().cloned().map(Ok).collect();
+            return Ok(Box::pin(futures_util::stream::iter(chunks)));
+        }
+        let collected = std::sync::Arc::new(std::sync::Mutex::new(Some(Vec::new())));
+        let seen = collected.clone();
+        let audio = self.0.synthesize(text).await?.inspect(move |item| {
+            let mut seen = seen.lock().unwrap();
+            match item {
+                Ok(chunk) => {
+                    if let Some(chunks) = seen.as_mut() {
+                        chunks.push(chunk.clone());
+                    }
+                }
+                Err(_) => *seen = None,
+            }
+        });
+        let store = futures_util::stream::once(async move {
+            if let Some(chunks) = collected.lock().unwrap().take().filter(|c| !c.is_empty()) {
+                filler_cache()
+                    .lock()
+                    .unwrap()
+                    .insert(key, std::sync::Arc::new(chunks));
+            }
+        })
+        .filter_map(|()| async { None });
+        Ok(Box::pin(audio.chain(store)))
+    }
+}
 
 pub fn is_conversational_pleasantry(text: &str) -> bool {
     let lower = text.trim().to_ascii_lowercase();

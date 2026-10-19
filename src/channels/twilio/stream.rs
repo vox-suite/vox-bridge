@@ -134,7 +134,10 @@ async fn run_twilio_socket(socket: WebSocket, state: Arc<AppState>) -> Result<()
         tts_provider: Some(profile.tts.provider.clone()),
         outbound: accepted_call.action_id.is_some(),
     };
-    let providers = state.voice.providers.providers_for(&profile)?;
+    let providers = state
+        .voice
+        .providers
+        .providers_for(&profile, crate::voice::audio::AudioFormat::Mulaw8k)?;
     tracing::info!(parent: &span, provider_build_ms = provider_started.elapsed().as_millis() as u64, "VOICE_PROVIDERS_READY");
     let VoiceSessionHandle {
         playback,

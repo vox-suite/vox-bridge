@@ -8,6 +8,8 @@ pub enum Control {
         ticket: String,
         #[serde(default)]
         client_metrics: bool,
+        #[serde(default)]
+        audio_formats: Vec<String>,
     },
     PlaybackFinished {
         name: String,

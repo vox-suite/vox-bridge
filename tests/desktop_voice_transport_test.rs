@@ -11,6 +11,15 @@ fn parses_mark_without_changing_identity() {
         matches!(parse_control(r#"{"type":"playback_finished","name":"response-1"}"#).unwrap(), Control::PlaybackFinished { name } if name == "response-1")
     );
 }
+#[test]
+fn start_advertises_audio_formats_and_defaults_to_none() {
+    assert!(
+        matches!(parse_control(r#"{"type":"start","ticket":"t","audio_formats":["pcm_s16le_16000"]}"#).unwrap(), Control::Start { audio_formats, .. } if audio_formats == ["pcm_s16le_16000"])
+    );
+    assert!(
+        matches!(parse_control(r#"{"type":"start","ticket":"t"}"#).unwrap(), Control::Start { audio_formats, .. } if audio_formats.is_empty())
+    );
+}
 
 #[tokio::test]
 async fn redeemed_session_scopes_stream_and_completion_without_forwarding_identity() {

@@ -58,6 +58,10 @@ pub trait ConversationClient: Send + Sync {
         Ok(())
     }
 
+    async fn fast_navigate(&self, _transcript: &str, _page: &str) -> Option<String> {
+        None
+    }
+
     async fn interrupted(
         &self,
         _context: &CallContext,
