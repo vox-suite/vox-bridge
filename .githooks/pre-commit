@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Rust Pre-Commit Hook (Powered by Charm Gum)
+# Uses Gum for spinners, styled banners, and status badges.
+# ==============================================================================
+
+set -euo pipefail
+
+# Ensure gum is installed
+if ! command -v gum &> /dev/null; then
+  echo "Error: 'gum' is not installed. Run 'brew install gum' or 'cargo install gum'." >&2
+  exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Header Banner
+# ------------------------------------------------------------------------------
+gum style \
+  --foreground 212 --border-foreground 99 --border double \
+  --align center --width 54 --margin "1 0 1 0" --padding "0 2" \
+  "🦀 RUST PRE-COMMIT AUTO-FIX" \
+  "$(gum style --foreground 245 --italic 'Formatting, Clippy fixes, and Git staging')"
+
+# ------------------------------------------------------------------------------
+# Step 1: Rustfmt with Live Spinner
+# ------------------------------------------------------------------------------
+gum spin --spinner dot --title " [1/3] Formatting codebase with cargo fmt..." -- \
+  cargo fmt
+gum log --level info --structured "cargo fmt" status="completed"
+
+# ------------------------------------------------------------------------------
+# Step 2: Clippy Auto-Fix with Live Spinner
+# ------------------------------------------------------------------------------
+gum spin --spinner dot --title " [2/3] Applying eligible Clippy fixes..." -- \
+  cargo clippy --fix --allow-dirty --allow-staged
+gum log --level info --structured "cargo clippy" status="fixes applied"
+
+# ------------------------------------------------------------------------------
+# Step 3: Git Re-stage with Live Spinner
+# ------------------------------------------------------------------------------
+gum spin --spinner dot --title " [3/3] Re-staging modified files in git..." -- \
+  git add -u
+gum log --level info --structured "git add" status="index updated"
+
+# ------------------------------------------------------------------------------
+# Success Card
+# ------------------------------------------------------------------------------
+echo ""
+gum style \
+  --foreground 82 --border-foreground 82 --border rounded \
+  --padding "0 2" --margin "0 0 1 0" \
+  "✔ All checks passed and files staged cleanly! Ready to commit."
