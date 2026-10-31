@@ -1,112 +1,19 @@
-use dashmap::DashMap;
-use std::sync::Arc;
+mod channels;
+mod state;
 
-use vox_bridge::channels::twilio::{TwilioApiClient, VOICE_STATUS_URL, VOICE_STREAM_URL};
-use vox_bridge::core::client::CoreClient;
-use vox_bridge::providers::telephony::TelephonyClient;
-use vox_bridge::voice::config::VoiceConfig;
-use vox_bridge::voice::registry::VoiceRuntime;
-use vox_bridge::{AppState, app};
+use actix_web::{App, HttpServer, web};
+use dotenv::dotenv;
 
-#[tokio::main]
-async fn main() {
-    dotenv::dotenv().ok();
-    install_crypto_provider();
-    if std::env::var("LOG_FORMAT").as_deref() == Ok("json")
-        || std::env::var_os("RAILWAY_ENVIRONMENT_ID").is_some()
-    {
-        tracing_subscriber::fmt().json().flatten_event(true).init();
-    } else {
-        tracing_subscriber::fmt::init();
-    }
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    dotenv().ok();
 
-    let twilio_state = Arc::new(DashMap::new());
-    let voice_config = VoiceConfig::from_env().expect("voice provider configuration is invalid");
-    let core_url = voice_config.secrets.core_url.clone();
-    let auth_token = voice_config.secrets.core_auth_token.clone();
-
-    let core_client = Arc::new(
-        CoreClient::new(core_url.clone(), auth_token.clone())
-            .and_then(CoreClient::with_host_trust_from_env)
-            .expect("core client initialization failed"),
-    );
-
-    let voice = Arc::new(
-        VoiceRuntime::from_config(voice_config)
-            .expect("voice provider runtime initialization failed"),
-    );
-
-    let twilio_account_sid = std::env::var("TWILIO_ACCOUNT_SID").unwrap_or_default();
-    let twilio_auth_token =
-        std::env::var("TWILIO_AUTH_TOKEN").expect("TWILIO_AUTH_TOKEN is missing");
-    let twilio_from_number = std::env::var("TWILIO_FROM_NUMBER").unwrap_or_default();
-
-    let telephony: Option<Arc<dyn TelephonyClient>> =
-        if !twilio_account_sid.is_empty() && !twilio_from_number.is_empty() {
-            TwilioApiClient::new(
-                twilio_account_sid.clone(),
-                twilio_auth_token.clone(),
-                twilio_from_number.clone(),
-                VOICE_STREAM_URL.to_string(),
-                VOICE_STATUS_URL.to_string(),
-            )
-            .ok()
-            .map(|client| Arc::new(client) as Arc<dyn TelephonyClient>)
-        } else {
-            None
-        };
-
-    let service_token = auth_token;
-    let whatsapp_verify_token = std::env::var("WA_VERIFY_KEY").ok();
-    let whatsapp_app_secret = std::env::var("META_APP_SECRET").ok();
-    let whatsapp_access_token = std::env::var("WHATSAPP_ACCESS_KEY").ok();
-    let whatsapp_phone_id = std::env::var("WHATSAPP_PHONE_ID").ok();
-    let opt_outs = Arc::new(DashMap::new());
-    let notification_deliveries = Arc::new(DashMap::new());
-
-    let app_state = Arc::new(AppState {
-        twilio: twilio_state,
-        twilio_account_sid: Arc::new(twilio_account_sid),
-        twilio_auth_token: Arc::new(twilio_auth_token),
-        twilio_from_number: Arc::new(twilio_from_number),
-        service_token: Arc::new(service_token),
-        core_url: Arc::new(core_url.clone()),
-        telephony,
-        voice,
-        core_client,
-        whatsapp_verify_token,
-        whatsapp_app_secret,
-        whatsapp_access_token,
-        whatsapp_phone_id,
-        opt_outs,
-        notification_deliveries,
-        messaging_client: None,
-    });
-
-    let port = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(3000);
-
-    let prewarm_url = core_url.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        if let Ok(client) = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()
-        {
-            let _ = client
-                .get(format!("{prewarm_url}/health/ready"))
-                .send()
-                .await;
-        }
-    });
-
-    if let Err(e) = app::run_server(app_state, port).await {
-        tracing::error!(error = %e, "Server failed to start");
-    }
-}
-
-fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    HttpServer::new(|| {
+        App::new()
+            .app_data(web::Data::new(state::init_actix_app_state()))
+            .configure(channels::channels_routes)
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
 }
