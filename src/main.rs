@@ -2,23 +2,19 @@ mod channels;
 mod local;
 mod state;
 
-use std::env;
-
 use actix_web::{App, HttpServer, web};
 use dotenv::dotenv;
-use sqlx::postgres::PgPoolOptions;
+use std::env;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
-    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set in the environment");
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-    let db = PgPoolOptions::new()
-        .max_connections(local::PG_MAX_CONNECTION)
-        .connect(&db_url)
+    let db = vox_db::create_pool(&database_url, local::PG_MAX_CONNECTION)
         .await
-        .expect("Failed to connect to Supabase");
+        .map_err(std::io::Error::other)?;
 
     let app_state = web::Data::new(state::init_actix_app_state(db));
 

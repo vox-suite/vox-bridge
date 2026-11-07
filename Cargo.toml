@@ -6,8 +6,12 @@ edition = "2024"
 [dependencies]
 actix-web = "4.18.1"
 actix-ws = "0.4.0"
+base64 = "0.22"
 dotenv = "0.15.0"
+hmac = "0.13"
 serde = "1.0.229"
+sha1 = "0.11"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "tls-rustls-ring-webpki"] }
 tokio = { version = "1.54.1", features = ["full"] }
 uuid = { version = "1.29.0", features = ["v7"] }
+vox-db = { version = "0.1.0", path = "../vox-shared/crates/vox-db" }
