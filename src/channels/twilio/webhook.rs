@@ -5,7 +5,7 @@ use super::signature::validate_twilio_signature;
 use crate::state::AppState;
 
 #[actix_web::post("/voice")]
-async fn post_twilio_voice(
+pub async fn post_twilio_voice(
     data: web::Data<AppState>,
     request: HttpRequest,
     form: web::Form<Vec<(String, String)>>,
