@@ -1,5 +1,4 @@
 use std::env;
-
 use vox_db::PgPool;
 
 #[derive(Clone)]
