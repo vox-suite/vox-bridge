@@ -28,7 +28,7 @@ pub async fn twilio_media_websocket(
         return Ok(HttpResponse::Forbidden().finish());
     }
 
-    let (res, session, stream) = actix_ws::handle(&req, stream)?;
+    let (res, mut session, stream) = actix_ws::handle(&req, stream)?;
     let mut stream = stream
         .aggregate_continuations()
         .max_continuation_size(2_usize.pow(20));
@@ -64,10 +64,38 @@ pub async fn twilio_media_websocket(
                                 break;
                             }
                         }
+                        Some("media") => {
+                            if !events_handlers::media_handler(
+                                &message,
+                                session.clone(),
+                                &mut active_stream,
+                            )
+                            .await
+                            {
+                                break;
+                            }
+                        }
+                        Some("stop") => {
+                            let _ = session.close(None).await;
+                            break;
+                        }
                         _ => {}
                     }
                 }
-
+                Ok(AggregatedMessage::Ping(bytes)) => {
+                    if session.pong(&bytes).await.is_err() {
+                        let _ = session.close(None).await;
+                        break;
+                    }
+                }
+                Ok(AggregatedMessage::Close(reason)) => {
+                    let _ = session.close(reason).await;
+                    break;
+                }
+                Err(_) => {
+                    let _ = session.close(None).await;
+                    break;
+                }
                 _ => {}
             }
         }

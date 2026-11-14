@@ -1,4 +1,5 @@
 use actix_ws::Session;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
 use vox_db::{PgPool, queries::voice_sessions::twilio_session_matches};
 
@@ -10,7 +11,7 @@ pub async fn connected_handler(message: &Value, session: Session) -> bool {
         return false;
     }
 
-    return true;
+    true
 }
 
 pub async fn start_handler(
@@ -43,5 +44,36 @@ pub async fn start_handler(
     }
 
     *active_stream = Some((session_id, stream_sid.to_owned()));
-    return true;
+    true
+}
+
+pub async fn media_handler(
+    message: &Value,
+    session: Session,
+    active_stream: &mut Option<(uuid::Uuid, String)>,
+) -> bool {
+    let Some((session_id, stream_sid)) = active_stream.as_ref() else {
+        return false;
+    };
+    if message["streamSid"].as_str() != Some(stream_sid.as_str()) {
+        let _ = session.close(None).await;
+        return false;
+    }
+
+    let Some(payload) = message["media"]["payload"].as_str() else {
+        let _ = session.close(None).await;
+        return false;
+    };
+
+    let Ok(audio_bytes) = STANDARD.decode(payload) else {
+        let _ = session.close(None).await;
+        return false;
+    };
+
+    println!(
+        "Session {session_id}: received {} audio bytes",
+        audio_bytes.len()
+    );
+
+    true
 }
