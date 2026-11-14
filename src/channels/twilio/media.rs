@@ -2,6 +2,9 @@ use actix_web::{Error, HttpRequest, HttpResponse, rt, web};
 use actix_ws::AggregatedMessage;
 use futures_util::StreamExt as _;
 use serde_json::Value;
+use vox_db::{
+    models::voice_sessions::VoiceSessionStatus, queries::voice_sessions::update_session_status,
+};
 
 use crate::{
     channels::twilio::{events_handlers, signature::validate_twilio_signature},
@@ -37,6 +40,7 @@ pub async fn twilio_media_websocket(
 
     rt::spawn(async move {
         let mut active_stream: Option<(uuid::Uuid, String)> = None;
+        let mut terminal_status = VoiceSessionStatus::Failed;
 
         while let Some(msg) = stream.next().await {
             match msg {
@@ -76,6 +80,7 @@ pub async fn twilio_media_websocket(
                             }
                         }
                         Some("stop") => {
+                            terminal_status = VoiceSessionStatus::Ended;
                             let _ = session.close(None).await;
                             break;
                         }
@@ -89,6 +94,12 @@ pub async fn twilio_media_websocket(
                     }
                 }
                 Ok(AggregatedMessage::Close(reason)) => {
+                    if reason
+                        .as_ref()
+                        .is_some_and(|reason| reason.code == actix_ws::CloseCode::Normal)
+                    {
+                        terminal_status = VoiceSessionStatus::Ended;
+                    }
                     let _ = session.close(reason).await;
                     break;
                 }
@@ -98,6 +109,12 @@ pub async fn twilio_media_websocket(
                 }
                 _ => {}
             }
+        }
+
+        if let Some((session_id, _)) = active_stream
+            && let Err(error) = update_session_status(&db, session_id, terminal_status).await
+        {
+            eprintln!("Failed to finish session {session_id}: {error}");
         }
     });
 

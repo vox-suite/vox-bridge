@@ -1,7 +1,11 @@
 use actix_ws::Session;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
-use vox_db::{PgPool, queries::voice_sessions::twilio_session_matches};
+use vox_db::{
+    PgPool,
+    models::voice_sessions::VoiceSessionStatus,
+    queries::voice_sessions::{twilio_session_matches, update_session_status},
+};
 
 pub async fn connected_handler(message: &Value, session: Session) -> bool {
     let supported = message["protocol"].as_str() == Some("Call");
@@ -20,6 +24,11 @@ pub async fn start_handler(
     db: PgPool,
     active_stream: &mut Option<(uuid::Uuid, String)>,
 ) -> bool {
+    if active_stream.is_some() {
+        let _ = session.close(None).await;
+        return false;
+    }
+
     let start_message = &message["start"];
     let session_id = start_message["customParameters"]["session_id"]
         .as_str()
@@ -39,6 +48,12 @@ pub async fn start_handler(
         twilio_session_matches(&db, session_id, account_sid, call_sid).await,
         Ok(true)
     ) {
+        let _ = session.close(None).await;
+        return false;
+    }
+
+    if let Err(error) = update_session_status(&db, session_id, VoiceSessionStatus::Active).await {
+        eprintln!("Failed to activate session {session_id}: {error}");
         let _ = session.close(None).await;
         return false;
     }
