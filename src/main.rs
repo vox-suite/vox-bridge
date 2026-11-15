@@ -1,3 +1,4 @@
+mod audio;
 mod channels;
 mod local;
 mod state;

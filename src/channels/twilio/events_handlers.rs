@@ -7,6 +7,8 @@ use vox_db::{
     queries::voice_sessions::{twilio_session_matches, update_session_status},
 };
 
+use crate::audio::assembly_ai::{self, AssemblySocket};
+
 pub async fn connected_handler(message: &Value, session: Session) -> bool {
     let supported = message["protocol"].as_str() == Some("Call");
 
@@ -66,6 +68,8 @@ pub async fn media_handler(
     message: &Value,
     session: Session,
     active_stream: &mut Option<(uuid::Uuid, String)>,
+    assembly_socket: &mut AssemblySocket,
+    audio_buffer: &mut Vec<u8>,
 ) -> bool {
     let Some((session_id, stream_sid)) = active_stream.as_ref() else {
         return false;
@@ -85,10 +89,11 @@ pub async fn media_handler(
         return false;
     };
 
-    println!(
-        "Session {session_id}: received {} audio bytes",
-        audio_bytes.len()
-    );
+    if let Err(error) = assembly_ai::send_audio(assembly_socket, audio_buffer, &audio_bytes).await {
+        eprintln!("Failed to send audio for session {session_id}: {error}");
+        let _ = session.close(None).await;
+        return false;
+    }
 
     true
 }
